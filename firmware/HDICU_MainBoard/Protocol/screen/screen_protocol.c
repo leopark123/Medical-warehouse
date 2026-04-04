@@ -1,0 +1,295 @@
+/**
+ * @file    screen_protocol.c
+ * @brief   Screen board communication — send display data + receive commands
+ */
+
+#include "screen_protocol.h"
+#include "bsp_config.h"
+#include <string.h>
+
+extern void bsp_uart_screen_send(const uint8_t *data, uint16_t len);
+
+static FrameParser_t s_parser;
+static uint32_t s_last_rx_time_ms;
+static bool s_connected;
+static uint8_t s_tx_buf[64];
+
+/* ========================================================================= */
+/*  Outgoing: Main → Screen                                                  */
+/* ========================================================================= */
+
+void screen_send_display_data(void)
+{
+    AppData_t *d = app_data_get();
+    uint8_t payload[SCR_DISPLAY_DATA_LEN];
+    memset(payload, 0, sizeof(payload));
+
+    /* Bytes 0-1: Realtime temperature (int16, x10) */
+    payload[0] = (uint8_t)(d->sensor.temperature_avg >> 8);
+    payload[1] = (uint8_t)(d->sensor.temperature_avg & 0xFF);
+
+    /* Byte 2: Realtime humidity (uint8, integer %) */
+    payload[2] = d->sensor.humidity;
+
+    /* Byte 3: Realtime O2 (uint8, integer %) */
+    payload[3] = d->sensor.o2_percent;
+
+    /* Bytes 4-5: Realtime CO2 (uint16, ppm) */
+    payload[4] = (uint8_t)(d->sensor.co2_ppm >> 8);
+    payload[5] = (uint8_t)(d->sensor.co2_ppm & 0xFF);
+
+    /* Byte 6: Heart rate */
+    payload[6] = d->sensor.heart_rate;
+
+    /* Byte 7: SpO2 */
+    payload[7] = d->sensor.spo2;
+
+    /* Byte 8: Fan speed */
+    payload[8] = d->control.fan_speed_actual;
+
+    /* Byte 9: Nursing level */
+    payload[9] = d->control.nursing_level_actual;
+
+    /* Bytes 10-11: Fog remaining (seconds) */
+    payload[10] = (uint8_t)(d->control.fog_remaining >> 8);
+    payload[11] = (uint8_t)(d->control.fog_remaining & 0xFF);
+
+    /* Bytes 12-13: Disinfect remaining */
+    payload[12] = (uint8_t)(d->control.disinfect_remaining >> 8);
+    payload[13] = (uint8_t)(d->control.disinfect_remaining & 0xFF);
+
+    /* Bytes 14-15: O2 accumulated time */
+    payload[14] = (uint8_t)(d->control.o2_accumulated >> 8);
+    payload[15] = (uint8_t)(d->control.o2_accumulated & 0xFF);
+
+    /* Bytes 16-17: Relay status bitmap */
+    payload[16] = (uint8_t)(d->control.relay_status >> 8);
+    payload[17] = (uint8_t)(d->control.relay_status & 0xFF);
+
+    /* Byte 18: Light status */
+    payload[18] = d->control.light_status;
+
+    /* Byte 19: Switch status */
+    payload[19] = d->control.switch_status;
+
+    /* Bytes 20-21: Alarm flags */
+    payload[20] = (uint8_t)(d->alarm.alarm_flags >> 8);
+    payload[21] = (uint8_t)(d->alarm.alarm_flags & 0xFF);
+
+    /* Bytes 22-25: Reserved (zeroed) */
+
+    uint16_t flen = frame_build_screen(s_tx_buf, SCR_CMD_DISPLAY_DATA, payload, SCR_DISPLAY_DATA_LEN);
+    bsp_uart_screen_send(s_tx_buf, flen);
+}
+
+void screen_send_heartbeat(void)
+{
+    AppData_t *d = app_data_get();
+    uint8_t payload[8];
+
+    /* Bytes 0-3: Total runtime (seconds) */
+    uint32_t rt = d->system.total_runtime_min * 60;
+    payload[0] = (uint8_t)(rt >> 24);
+    payload[1] = (uint8_t)(rt >> 16);
+    payload[2] = (uint8_t)(rt >> 8);
+    payload[3] = (uint8_t)(rt & 0xFF);
+
+    /* Bytes 4-7: This boot uptime (seconds) */
+    payload[4] = (uint8_t)(d->system.boot_uptime_sec >> 24);
+    payload[5] = (uint8_t)(d->system.boot_uptime_sec >> 16);
+    payload[6] = (uint8_t)(d->system.boot_uptime_sec >> 8);
+    payload[7] = (uint8_t)(d->system.boot_uptime_sec & 0xFF);
+
+    uint16_t flen = frame_build_screen(s_tx_buf, SCR_CMD_HEARTBEAT, payload, 8);
+    bsp_uart_screen_send(s_tx_buf, flen);
+}
+
+/* ========================================================================= */
+/*  Incoming: Screen → Main                                                  */
+/* ========================================================================= */
+
+static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t len)
+{
+    AppData_t *d = app_data_get();
+
+    switch (cmd) {
+    case SCR_CMD_PARAM_SET: {
+        /* 0x81: ParamID(1B) + Value(2B) */
+        if (len < 3) break;
+        uint8_t param_id = data[0];
+        uint16_t value = ((uint16_t)data[1] << 8) | data[2];
+        switch (param_id) {
+        case 0x01: if (value >= 100 && value <= 400) d->setpoint.target_temp = value; break;
+        case 0x02: if (value >= 300 && value <= 900) d->setpoint.target_humidity = value; break;
+        case 0x03: if (value >= 210 && value <= 1000) d->setpoint.target_o2 = value; break;
+        case 0x04: if (value <= 3) d->setpoint.fan_speed = (uint8_t)value; break;
+        case 0x05: if (value >= 1 && value <= 3) d->setpoint.nursing_level = (uint8_t)value; break;
+        default: break;
+        }
+        break;
+    }
+
+    case SCR_CMD_KEY_ACTION: {
+        /* 0x82: KeyID(1B) + ActionType(1B)
+         * Key IDs per frozen spec 5.5.2:
+         * 0x01=护理等级灯 0x02=照明灯 0x03=检查灯 0x04=红外灯
+         * 0x05=紫外灯 0x06=开放式供氧 0x07=内/外循环 0x08=新风净化
+         * 0x09=报警确认 0x0A=编码器按下
+         * ActionType: 0x01=单击 0x02=长按 0x03=按下 0x04=松开 */
+        if (len < 2) break;
+        uint8_t key_id = data[0];
+        uint8_t action = data[1];
+        /* --- Single click actions --- */
+        if (action == 0x01) {
+            switch (key_id) {
+            case 0x01: /* 护理等级灯: cycle 1→2→3→1 */
+                d->setpoint.nursing_level = (d->setpoint.nursing_level % 3) + 1;
+                break;
+            case 0x02: /* 照明灯 toggle (light_ctrl bit1) */
+                d->setpoint.light_ctrl ^= 0x02;
+                break;
+            case 0x03: /* 检查灯 toggle (light_ctrl bit0) */
+                d->setpoint.light_ctrl ^= 0x01;
+                break;
+            case 0x04: /* 红外灯 toggle — RELAY controlled (BSP_RELAY_RED_IO)
+                        * 红外灯 is a 220V device via relay, not an LED bit. */
+            {
+                uint16_t *r = &d->control.relay_status;
+                *r ^= (1U << BSP_RELAY_RED_IO);
+                break;
+            }
+            case 0x05: /* 紫外灯 toggle — RELAY controlled (BSP_RELAY_ZIY_IO) */
+            {
+                extern bool interlock_can_start_uv(const AppData_t *d);
+                uint16_t *r = &d->control.relay_status;
+                if (*r & (1U << BSP_RELAY_ZIY_IO)) {
+                    *r &= ~(1U << BSP_RELAY_ZIY_IO);
+                    d->control.disinfect_remaining = 0;
+                } else {
+                    if (interlock_can_start_uv(d)) {
+                        *r |= (1U << BSP_RELAY_ZIY_IO);
+                    }
+                }
+                break;
+            }
+            case 0x06: /* 开放式供氧 toggle */
+                d->setpoint.open_o2 = d->setpoint.open_o2 ? 0 : 1;
+                break;
+            case 0x07: /* 内/外循环 toggle */
+                d->setpoint.inner_cycle = d->setpoint.inner_cycle ? 0 : 1;
+                break;
+            case 0x08: /* 新风净化 toggle */
+                d->setpoint.fresh_air = d->setpoint.fresh_air ? 0 : 1;
+                break;
+            case 0x09: /* 报警确认 */
+                d->alarm.acknowledged = true;
+                break;
+            case 0x0A: /* 编码器按下 — confirm current parameter edit */
+                /* Encoder press is handled by HMI state machine (screen board side).
+                 * Main controller receives this as notification only. */
+                break;
+            default:
+                break;
+            }
+        }
+        /* --- Long press actions (>2s) --- */
+        else if (action == 0x02) {
+            switch (key_id) {
+            case 0x0A: /* 编码器长按3秒 = 供氧累计时间清零 (frozen spec 4.4) */
+            {
+                extern void control_timers_reset_o2_accum(AppData_t *d);
+                control_timers_reset_o2_accum(d);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        break;
+    }
+
+    case SCR_CMD_TIMER_CTRL: {
+        /* 0x83: TimerType(1B) + Cmd(1B) + Duration(2B)
+         * TimerType: 0x01=雾化 0x02=消毒 0x03=供氧累计
+         * Cmd: 0x01=开始 0x02=停止 0x03=清零 */
+        if (len < 4) break;
+        uint8_t timer_type = data[0];
+        uint8_t timer_cmd  = data[1];
+        uint16_t duration  = ((uint16_t)data[2] << 8) | data[3];
+
+        extern void control_timers_start_fog(AppData_t *d, uint16_t duration_sec);
+        extern void control_timers_start_disinfect(AppData_t *d, uint16_t duration_sec);
+        extern void control_timers_reset_o2_accum(AppData_t *d);
+
+        switch (timer_type) {
+        case 0x01: /* 雾化 */
+            if (timer_cmd == 0x01)      control_timers_start_fog(d, duration);
+            else if (timer_cmd == 0x02) control_timers_start_fog(d, 0);
+            break;
+        case 0x02: /* 消毒 */
+            if (timer_cmd == 0x01)      control_timers_start_disinfect(d, duration);
+            else if (timer_cmd == 0x02) control_timers_start_disinfect(d, 0);
+            break;
+        case 0x03: /* 供氧累计 */
+            if (timer_cmd == 0x03)      control_timers_reset_o2_accum(d);
+            break;
+        default:
+            break;
+        }
+        break;
+    }
+
+    case SCR_CMD_HEARTBEAT_ACK:
+        /* 0x84: Screen acknowledged our heartbeat */
+        s_last_rx_time_ms = HAL_GetTick();
+        s_connected = true;
+        break;
+
+    case SCR_CMD_ALARM_ACK: {
+        /* 0x85: AlarmID(1B)
+         * 0xFF = acknowledge all alarms
+         * Per frozen spec: alarm clears when BOTH parameter normal AND acknowledged.
+         * Here we just set the acknowledged flag; AlarmTask handles the actual clearing. */
+        if (len < 1) break;
+        d->alarm.acknowledged = true;
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+/* ========================================================================= */
+/*  Public API                                                               */
+/* ========================================================================= */
+
+void screen_protocol_init(void)
+{
+    frame_parser_init(&s_parser, true);     /* Screen: double header AA 55 */
+    s_last_rx_time_ms = 0;
+    s_connected = false;
+}
+
+void screen_protocol_rx_byte(uint8_t byte)
+{
+    if (frame_parser_feed(&s_parser, byte)) {
+        s_last_rx_time_ms = HAL_GetTick();
+        s_connected = true;
+        dispatch_screen_command(s_parser.cmd, s_parser.data, s_parser.len);
+        frame_parser_init(&s_parser, true);
+    }
+}
+
+void screen_protocol_tick(uint32_t now_ms)
+{
+    if (s_connected && (now_ms - s_last_rx_time_ms > SCR_HEARTBEAT_TIMEOUT_MS)) {
+        s_connected = false;
+        app_data_get()->alarm.alarm_flags |= ALARM_COMM_FAULT;
+    }
+}
+
+bool screen_protocol_is_connected(void)
+{
+    return s_connected;
+}

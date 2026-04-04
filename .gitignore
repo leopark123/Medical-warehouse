@@ -1,0 +1,58 @@
+# === Only track project core files ===
+
+# Build artifacts
+firmware/HDICU_MainBoard/build/
+*.o
+*.elf
+*.bin
+*.map
+*.hex
+
+# Libraries (large, download per README)
+firmware/HDICU_MainBoard/Lib/
+
+# IDE/OS files
+.settings/
+.metadata/
+*.launch
+.cproject
+.project
+.mxproject
+Thumbs.db
+.DS_Store
+desktop.ini
+~$*
+
+# Claude internal
+.claude/
+
+# Large binaries
+*.zip
+*.rar
+*.mp4
+*.STEP
+*.exe
+*.7z
+
+# Audit renders
+.audit_renders/
+
+# === Exclude non-core content ===
+# Archive
+99_Archive_旧版本/
+
+# Reference code from other projects (not our code)
+02_开发实现/参考例程/
+02_开发实现/电脑端上位机和串口助手/
+
+# 3D/structure files (large, not code)
+04_结构与测试资料/3d图纸和结构指导/
+04_结构与测试资料/数据优化建议/
+04_结构与测试资料/测试流程/
+
+# Spec PDFs (large, not code)
+03_协议与规格书/*.pdf
+03_协议与规格书/*.xlsx
+
+# 文档对齐修订清单 (历史文件)
+02_开发实现/文档对齐修订清单.md

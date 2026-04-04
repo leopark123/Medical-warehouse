@@ -1,0 +1,52 @@
+/**
+ * @file    humidity_control.c
+ * @brief   Humidity control — threshold + hysteresis (±3% = ±30 in x10 units)
+ */
+#include "humidity_control.h"
+#include "bsp_config.h"
+
+#define HUMID_HYSTERESIS_X10    30  /* 3.0% in x10 units */
+
+void humidity_control_update(AppData_t *d)
+{
+    int16_t actual = (int16_t)d->sensor.humidity_raw;
+    int16_t setpoint = (int16_t)d->setpoint.target_humidity;
+
+    switch (d->control.humid_state) {
+    case HUMID_STATE_IDLE:
+        if (actual < setpoint - HUMID_HYSTERESIS_X10) {
+            d->control.humid_state = HUMID_STATE_HUMIDIFY;
+        } else if (actual > setpoint + HUMID_HYSTERESIS_X10) {
+            d->control.humid_state = HUMID_STATE_DEHUMIDIFY;
+        }
+        break;
+
+    case HUMID_STATE_HUMIDIFY:
+        if (actual >= setpoint) {
+            d->control.humid_state = HUMID_STATE_IDLE;
+        }
+        break;
+
+    case HUMID_STATE_DEHUMIDIFY:
+        if (actual <= setpoint) {
+            d->control.humid_state = HUMID_STATE_IDLE;
+        }
+        break;
+    }
+
+    uint16_t *r = &d->control.relay_status;
+
+    switch (d->control.humid_state) {
+    case HUMID_STATE_IDLE:
+        *r &= ~(1U << BSP_RELAY_JIASHI_IO);
+        break;
+    case HUMID_STATE_HUMIDIFY:
+        *r |= (1U << BSP_RELAY_JIASHI_IO);
+        break;
+    case HUMID_STATE_DEHUMIDIFY:
+        *r &= ~(1U << BSP_RELAY_JIASHI_IO);
+        /* Engage cooling for dehumidification */
+        *r |= (1U << BSP_RELAY_YASUO_IO);
+        break;
+    }
+}
