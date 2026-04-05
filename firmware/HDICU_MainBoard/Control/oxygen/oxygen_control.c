@@ -9,6 +9,11 @@
 
 void oxygen_control_update(AppData_t *d)
 {
+    /* If O2 sensor is offline, hold current state — don't act on stale data */
+    if (!d->sensor.o2_valid && d->control.o2_state != O2_STATE_OPEN_MODE) {
+        return;
+    }
+
     int16_t actual = (int16_t)d->sensor.o2_raw;
     int16_t setpoint = (int16_t)d->setpoint.target_o2;
 

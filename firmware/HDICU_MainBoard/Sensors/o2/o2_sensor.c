@@ -17,7 +17,10 @@
  */
 
 #include "o2_sensor.h"
+#include "stm32f1xx_hal.h"
 #include <string.h>
+
+#define O2_TIMEOUT_MS   3000    /* 3s: >6× the 500ms report interval */
 
 #define O2_FRAME_LEN    12
 #define O2_HEAD1        0x16
@@ -28,6 +31,7 @@
 static uint8_t s_buf[O2_FRAME_LEN];
 static uint8_t s_idx;
 static O2SensorData_t s_data;
+static uint32_t s_last_valid_tick;
 static bool s_valid;
 
 void o2_sensor_init(void)
@@ -84,6 +88,7 @@ void o2_sensor_rx_byte(uint8_t byte)
             s_data.humidity_raw = ((uint16_t)s_buf[5] << 8) | s_buf[6];
             s_data.temp_raw     = ((uint16_t)s_buf[7] << 8) | s_buf[8];
             s_data.pressure_raw = ((uint16_t)s_buf[9] << 8) | s_buf[10];
+            s_last_valid_tick = HAL_GetTick();
             s_valid = true;
         }
         /* else: checksum fail, discard */
@@ -93,4 +98,11 @@ void o2_sensor_rx_byte(uint8_t byte)
 }
 
 O2SensorData_t o2_sensor_get_data(void) { return s_data; }
-bool o2_sensor_is_valid(void) { return s_valid; }
+
+bool o2_sensor_is_valid(void)
+{
+    if (s_valid && (HAL_GetTick() - s_last_valid_tick > O2_TIMEOUT_MS)) {
+        s_valid = false;
+    }
+    return s_valid;
+}

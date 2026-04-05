@@ -254,9 +254,10 @@ def test_jfc103():
     other_ff = sum(1 for b in frame[1:] if b == 0xFF)
     assert_eq(other_ff, 0, "JFC103 no 0xFF in data (sync property)")
 
-    # Blood pressure fields are at bytes 71-72 (rsv[3], rsv[4])
-    # These should be IGNORED — always report 0 in protocol output
-    assert_true(True, "JFC103 BP fields exist but are not used (cloud-only)")
+    # Blood pressure at bytes 71-72 (rsv[3], rsv[4]) — verify they exist but
+    # protocol output must fill 0 regardless of what JFC103 reports
+    assert_eq(frame[71], 0, "JFC103 BP byte71 exists (unused in protocol, filled 0)")
+    assert_eq(frame[72], 0, "JFC103 BP byte72 exists (unused in protocol, filled 0)")
 
 # =========================================================================
 #  Test 7: Interlock Rules
@@ -271,7 +272,7 @@ def test_interlocks():
     R_JIASHI=5; R_FENGJI=6; R_YASUO=7; R_WH=8
     SW_INNER=0x01; SW_FRESH=0x02; SW_OPEN_O2=0x04
 
-    def apply_interlocks(relay, switch_st, open_o2_setpoint, fog_remaining=0, disinfect_remaining=0):
+    def apply_interlocks(relay, switch_st, open_o2_setpoint, o2_supplying=False):
         """Simulate interlock_apply() logic. Returns (relay, switch_st, open_o2_setpoint)."""
         triggered = False
         # Snapshot before modifications
@@ -279,11 +280,14 @@ def test_interlocks():
         open_o2_requested = (switch_st & SW_OPEN_O2) != 0
 
         # Rule 5: fogging blocks open O2 (runs BEFORE Rule 4)
+        # Mirrors interlock.c: only close O2 valve if NOT in normal supply state
         if fogging_active and open_o2_requested:
             switch_st &= ~SW_OPEN_O2
             open_o2_setpoint = 0
-            # Close O2 valve (unless normal supply)
-            relay &= ~(1 << R_O2)
+            # Close O2 valve only if not in normal O2_STATE_SUPPLYING
+            # (o2_supplying param indicates normal supply is active)
+            if not o2_supplying:
+                relay &= ~(1 << R_O2)
             triggered = True
 
         # Rule 4: Open O2 mode
@@ -538,6 +542,37 @@ def test_write_validation():
     result, err = validate_write(bad)
     assert_eq(result, 0x01, "Temp=50.0°C rejected (>40.0)")
     assert_eq(err, 0x01, "Temp OOB error code")
+
+    # fresh=2 → reject
+    bad = bytearray(valid)
+    bad[15] = 2
+    result, err = validate_write(bad)
+    assert_eq(result, 0x01, "Fresh=2 rejected (boolean OOB)")
+
+    # CO2=5001 → reject
+    bad = bytearray(valid)
+    struct.pack_into('>H', bad, 6, 5001)
+    result, err = validate_write(bad)
+    assert_eq(result, 0x01, "CO2=5001 rejected (>5000)")
+    assert_eq(err, 0x04, "CO2 OOB error code")
+
+    # fog=3601 → reject
+    bad = bytearray(valid)
+    struct.pack_into('>H', bad, 8, 3601)
+    result, err = validate_write(bad)
+    assert_eq(result, 0x01, "Fog=3601 rejected (>3600)")
+
+    # disinfect=3601 → reject
+    bad = bytearray(valid)
+    struct.pack_into('>H', bad, 10, 3601)
+    result, err = validate_write(bad)
+    assert_eq(result, 0x01, "Disinfect=3601 rejected (>3600)")
+
+    # O2=209 → reject (<210)
+    bad = bytearray(valid)
+    struct.pack_into('>H', bad, 4, 209)
+    result, err = validate_write(bad)
+    assert_eq(result, 0x01, "O2=209 rejected (<210)")
 
     # Wrong length → reject
     result, err = validate_write(bytes(20))

@@ -12,6 +12,11 @@
 
 void temp_control_update(AppData_t *d)
 {
+    /* NTC is always valid (ADC), but check for out-of-range (sensor disconnected) */
+    if (d->sensor.temperature_avg == -999) {
+        return;  /* All 4 channels invalid — hold current state */
+    }
+
     int16_t actual = d->sensor.temperature_avg;
     int16_t setpoint = (int16_t)d->setpoint.target_temp;
     int16_t upper = setpoint + TEMP_HYSTERESIS_X10;

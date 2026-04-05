@@ -147,45 +147,51 @@ static void AlarmTask(void *arg)
     for (;;) {
         uint16_t flags = 0;
 
-        /* Temperature: setpoint ± 5°C, 10s delay */
+        /* Temperature: setpoint ± 5°C, 10s delay (skip if NTC invalid) */
         int16_t t_set = (int16_t)d->setpoint.target_temp;
-        if (d->sensor.temperature_avg > t_set + ALARM_TEMP_OFFSET_X10) {
+        if (d->sensor.temperature_avg != -999 &&
+            d->sensor.temperature_avg > t_set + ALARM_TEMP_OFFSET_X10) {
             if (++temp_high_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_TEMP_HIGH;
         } else { temp_high_cnt = 0; }
 
-        if (d->sensor.temperature_avg < t_set - ALARM_TEMP_OFFSET_X10) {
+        if (d->sensor.temperature_avg != -999 &&
+            d->sensor.temperature_avg < t_set - ALARM_TEMP_OFFSET_X10) {
             if (++temp_low_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_TEMP_LOW;
         } else { temp_low_cnt = 0; }
 
-        /* Humidity: setpoint ± 5%, 10s delay */
-        int16_t h_set = (int16_t)d->setpoint.target_humidity;
-        if (d->sensor.humidity_raw > (uint16_t)(h_set + ALARM_HUMID_OFFSET_X10)) {
-            if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
-        } else if (d->sensor.humidity_raw < (uint16_t)(h_set - ALARM_HUMID_OFFSET_X10)) {
-            if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
+        /* Humidity: setpoint ± 5%, 10s delay (skip if O2 sensor offline) */
+        if (d->sensor.o2_valid) {
+            int16_t h_set = (int16_t)d->setpoint.target_humidity;
+            if (d->sensor.humidity_raw > (uint16_t)(h_set + ALARM_HUMID_OFFSET_X10)) {
+                if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
+            } else if (d->sensor.humidity_raw < (uint16_t)(h_set - ALARM_HUMID_OFFSET_X10)) {
+                if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
+            } else { humid_cnt = 0; }
         } else { humid_cnt = 0; }
 
-        /* O2: setpoint ± 5%, 10s delay */
-        int16_t o2_set = (int16_t)d->setpoint.target_o2;
-        if (d->sensor.o2_raw > (uint16_t)(o2_set + ALARM_O2_OFFSET_X10) ||
-            d->sensor.o2_raw < (uint16_t)(o2_set - ALARM_O2_OFFSET_X10)) {
-            if (++o2_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_O2_CO2;
+        /* O2: setpoint ± 5%, 10s delay (skip if O2 sensor offline) */
+        if (d->sensor.o2_valid) {
+            int16_t o2_set = (int16_t)d->setpoint.target_o2;
+            if (d->sensor.o2_raw > (uint16_t)(o2_set + ALARM_O2_OFFSET_X10) ||
+                d->sensor.o2_raw < (uint16_t)(o2_set - ALARM_O2_OFFSET_X10)) {
+                if (++o2_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_O2_CO2;
+            } else { o2_cnt = 0; }
         } else { o2_cnt = 0; }
 
-        /* CO2: >5000ppm, 10s delay (high alarm only) */
-        if (d->sensor.co2_ppm > ALARM_CO2_HIGH_PPM) {
+        /* CO2: >5000ppm, 10s delay (skip if CO2 sensor offline) */
+        if (d->sensor.co2_valid && d->sensor.co2_ppm > ALARM_CO2_HIGH_PPM) {
             if (++co2_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_O2_CO2;
         } else { co2_cnt = 0; }
 
-        /* Heart rate: 50~140 bpm, 3s delay */
-        if (d->sensor.heart_rate > 0) {
+        /* Heart rate: 50~140 bpm, 3s delay (skip if JFC103 offline) */
+        if (d->sensor.jfc103_valid && d->sensor.heart_rate > 0) {
             if (d->sensor.heart_rate < ALARM_HR_LOW || d->sensor.heart_rate > ALARM_HR_HIGH) {
                 if (++hr_cnt >= ALARM_DELAY_FAST_TICKS) flags |= ALARM_HEART_RATE;
             } else { hr_cnt = 0; }
-        }
+        } else { hr_cnt = 0; }
 
-        /* SpO2: <85%, 3s delay (low alarm only) */
-        if (d->sensor.spo2 > 0 && d->sensor.spo2 < ALARM_SPO2_LOW_THRESHOLD) {
+        /* SpO2: <85%, 3s delay (skip if JFC103 offline) */
+        if (d->sensor.jfc103_valid && d->sensor.spo2 > 0 && d->sensor.spo2 < ALARM_SPO2_LOW_THRESHOLD) {
             if (++spo2_cnt >= ALARM_DELAY_FAST_TICKS) flags |= ALARM_SPO2_LOW;
         } else { spo2_cnt = 0; }
 

@@ -9,6 +9,11 @@
 
 void humidity_control_update(AppData_t *d)
 {
+    /* Humidity comes from O2 sensor — skip if offline */
+    if (!d->sensor.o2_valid) {
+        return;
+    }
+
     int16_t actual = (int16_t)d->sensor.humidity_raw;
     int16_t setpoint = (int16_t)d->setpoint.target_humidity;
 

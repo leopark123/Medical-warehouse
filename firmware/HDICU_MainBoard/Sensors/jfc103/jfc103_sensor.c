@@ -35,9 +35,11 @@
  */
 
 #include "jfc103_sensor.h"
+#include "stm32f1xx_hal.h"
 #include <string.h>
 
 #define JFC103_FRAME_LEN    88
+#define JFC103_TIMEOUT_MS   5000    /* 5s: ~4× the 1.28s report interval */
 #define JFC103_HEADER       0xFF
 #define JFC103_HR_OFFSET    65
 #define JFC103_SPO2_OFFSET  66
@@ -50,6 +52,7 @@ static uint8_t s_buf[JFC103_FRAME_LEN];
 static uint8_t s_idx;
 static uint8_t s_heart_rate;
 static uint8_t s_spo2;
+static uint32_t s_last_valid_tick;
 static bool s_valid;
 static bool s_synced;
 
@@ -101,6 +104,7 @@ void jfc103_sensor_rx_byte(uint8_t byte)
         /* Basic validity check: physiological range */
         if (s_heart_rate > 0 && s_heart_rate <= 250 &&
             s_spo2 > 0 && s_spo2 <= 100) {
+            s_last_valid_tick = HAL_GetTick();
             s_valid = true;
         } else {
             s_valid = false;
@@ -113,4 +117,11 @@ void jfc103_sensor_rx_byte(uint8_t byte)
 
 uint8_t jfc103_get_heart_rate(void) { return s_heart_rate; }
 uint8_t jfc103_get_spo2(void) { return s_spo2; }
-bool jfc103_is_valid(void) { return s_valid; }
+
+bool jfc103_is_valid(void)
+{
+    if (s_valid && (HAL_GetTick() - s_last_valid_tick > JFC103_TIMEOUT_MS)) {
+        s_valid = false;
+    }
+    return s_valid;
+}
