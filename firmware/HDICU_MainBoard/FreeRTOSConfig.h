@@ -8,8 +8,10 @@
 #define configUSE_PREEMPTION                    1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
 #define configUSE_TICKLESS_IDLE                 0
-#define configCPU_CLOCK_HZ                      72000000UL
-#define configSYSTICK_CLOCK_HZ                  72000000UL
+/* Use actual clock — SystemCoreClock is set by SystemCoreClockUpdate() at runtime */
+extern uint32_t SystemCoreClock;
+#define configCPU_CLOCK_HZ                      (SystemCoreClock)
+/* Remove configSYSTICK_CLOCK_HZ to let FreeRTOS use configCPU_CLOCK_HZ */
 #define configTICK_RATE_HZ                      1000
 #define configMAX_PRIORITIES                    7
 #define configMINIMAL_STACK_SIZE                128
@@ -68,7 +70,11 @@
 /* Map FreeRTOS handlers to CMSIS names */
 #define vPortSVCHandler     SVC_Handler
 #define xPortPendSVHandler  PendSV_Handler
-#define xPortSysTickHandler SysTick_Handler
+/* NOTE: Do NOT map xPortSysTickHandler to SysTick_Handler here.
+ * We provide a custom SysTick_Handler in freertos_hooks.c that:
+ *   - Before scheduler starts: only calls HAL_IncTick()
+ *   - After scheduler starts: calls both xPortSysTickHandler() and HAL_IncTick()
+ * This prevents FreeRTOS tick from running before vTaskStartScheduler(). */
 
 /* Assert */
 #define configASSERT(x) if((x) == 0) { taskDISABLE_INTERRUPTS(); for(;;); }

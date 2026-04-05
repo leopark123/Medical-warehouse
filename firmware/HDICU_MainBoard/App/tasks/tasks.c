@@ -369,8 +369,9 @@ static void debug_send_status(AppData_t *d)
 
     buf[pos++] = '\r'; buf[pos++] = '\n';
 
-    extern void bsp_uart_ipad_send(const uint8_t *data, uint16_t len);
-    bsp_uart_ipad_send((const uint8_t *)buf, pos);
+    /* Debug output via UART1 (PA9 = P5 TX1), not UART2 (iPad protocol port) */
+    extern void bsp_uart_screen_send(const uint8_t *data, uint16_t len);
+    bsp_uart_screen_send((const uint8_t *)buf, pos);
 }
 #endif /* HDICU_DEBUG */
 
@@ -379,6 +380,12 @@ static void SystemTask(void *arg)
     (void)arg;
     AppData_t *d = app_data_get();
     uint32_t save_counter = 0;
+
+    /* Enable UART RX interrupts now that scheduler is running.
+     * Must be done here, not in app_init(), to avoid calling
+     * xQueueSendFromISR before scheduler is ready. */
+    extern void uart_driver_start_rx(void);
+    uart_driver_start_rx();
 
     for (;;) {
         /* Uptime */

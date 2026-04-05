@@ -55,8 +55,9 @@ void pwm_driver_init(void)
     s_htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
     HAL_TIM_Base_Init(&s_htim6);
 
-    /* Enable TIM6 update interrupt — high priority for low PWM jitter */
-    HAL_NVIC_SetPriority(TIM6_IRQn, 1, 0);
+    /* TIM6 priority must be >= configMAX_SYSCALL_INTERRUPT_PRIORITY (5)
+     * to avoid interfering with FreeRTOS kernel */
+    HAL_NVIC_SetPriority(TIM6_IRQn, 6, 0);
     HAL_NVIC_EnableIRQ(TIM6_IRQn);
 
     /* Start timer with interrupt */

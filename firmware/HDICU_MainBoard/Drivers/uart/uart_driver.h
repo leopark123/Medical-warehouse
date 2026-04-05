@@ -17,8 +17,11 @@ typedef enum {
     UART_CH_COUNT
 } UartChannel_t;
 
-/* Initialize all 5 UARTs with correct baud rates and enable RX interrupts */
+/* Initialize all 5 UARTs (GPIO + baud rate). Does NOT enable RX interrupts. */
 void uart_driver_init(void);
+
+/* Enable UART RX interrupts. Call AFTER FreeRTOS scheduler has started. */
+void uart_driver_start_rx(void);
 
 /* Transmit data on specified channel (blocking) */
 void uart_driver_send(UartChannel_t ch, const uint8_t *data, uint16_t len);

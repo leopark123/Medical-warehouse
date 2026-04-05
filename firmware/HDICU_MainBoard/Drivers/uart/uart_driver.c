@@ -74,20 +74,29 @@ void uart_driver_init(void)
         s_huart[i].Init.HwFlowCtl = UART_HWCONTROL_NONE;
         HAL_UART_Init(&s_huart[i]);
 
-        /* Start single-byte receive interrupt */
-        HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+        /* DO NOT start RX interrupts here — scheduler not running yet.
+         * Call uart_driver_start_rx() after vTaskStartScheduler(). */
     }
 
-    /* Enable UART NVIC interrupts */
+    /* Set NVIC priorities but DO NOT enable IRQs yet */
     HAL_NVIC_SetPriority(USART1_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(USART1_IRQn);
     HAL_NVIC_SetPriority(USART2_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(USART2_IRQn);
     HAL_NVIC_SetPriority(USART3_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(USART3_IRQn);
     HAL_NVIC_SetPriority(UART4_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(UART4_IRQn);
     HAL_NVIC_SetPriority(UART5_IRQn, 5, 0);
+}
+
+/* Start UART RX interrupts — call AFTER FreeRTOS scheduler has started.
+ * This prevents xQueueSendFromISR being called before scheduler is ready. */
+void uart_driver_start_rx(void)
+{
+    for (int i = 0; i < UART_CH_COUNT; i++) {
+        HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+    }
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
+    HAL_NVIC_EnableIRQ(USART3_IRQn);
+    HAL_NVIC_EnableIRQ(UART4_IRQn);
     HAL_NVIC_EnableIRQ(UART5_IRQn);
 }
 

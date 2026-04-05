@@ -65,3 +65,15 @@ void adc_driver_read_all(uint16_t adc_values[ADC_CHANNEL_COUNT])
         adc_values[i] = adc_driver_read_channel(i);
     }
 }
+
+/* ADC IRQ Handlers — prevent Default_Handler hard-loop if ADC interrupt fires */
+void ADC1_2_IRQHandler(void)
+{
+    HAL_ADC_IRQHandler(&s_hadc1);
+}
+
+void ADC3_IRQHandler(void)
+{
+    /* ADC3 not used but interrupt may fire — just clear it */
+    HAL_ADC_IRQHandler(&s_hadc1);
+}
