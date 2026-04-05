@@ -39,6 +39,7 @@ C_SOURCES = \
   App/main_app.c \
   App/data/app_data.c \
   App/tasks/tasks.c \
+  App/freertos_hooks.c \
   Protocol/common/protocol_frame.c \
   Protocol/ipad/ipad_protocol.c \
   Protocol/screen/screen_protocol.c \

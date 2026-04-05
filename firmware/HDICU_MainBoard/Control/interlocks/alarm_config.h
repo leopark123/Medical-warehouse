@@ -36,7 +36,7 @@
 #define ALARM_HR_HIGH               140
 
 /* SpO2 alarm: low only */
-#define ALARM_SPO2_LOW              85
+#define ALARM_SPO2_LOW_THRESHOLD    85
 
 /* Alarm delays (in AlarmTask ticks at 100ms period) */
 #define ALARM_DELAY_SLOW_TICKS      100     /* 10 seconds for temp/humid/O2/CO2 */

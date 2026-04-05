@@ -185,7 +185,7 @@ static void AlarmTask(void *arg)
         }
 
         /* SpO2: <85%, 3s delay (low alarm only) */
-        if (d->sensor.spo2 > 0 && d->sensor.spo2 < ALARM_SPO2_LOW) {
+        if (d->sensor.spo2 > 0 && d->sensor.spo2 < ALARM_SPO2_LOW_THRESHOLD) {
             if (++spo2_cnt >= ALARM_DELAY_FAST_TICKS) flags |= ALARM_SPO2_LOW;
         } else { spo2_cnt = 0; }
 
