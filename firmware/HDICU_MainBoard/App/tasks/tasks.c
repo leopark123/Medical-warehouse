@@ -308,6 +308,72 @@ static void CommIPadTask(void *arg)
 /*  SystemTask — Low priority, 1000ms                                        */
 /*  Runtime counting, flash save, watchdog                                   */
 /* ========================================================================= */
+/* Debug output — only compiled when HDICU_DEBUG is defined.
+ * DO NOT enable in production: uses UART2 which is the iPad protocol port. */
+#ifdef HDICU_DEBUG
+static uint16_t debug_itoa(int32_t val, char *buf)
+{
+    uint16_t len = 0;
+    if (val < 0) { buf[len++] = '-'; val = -val; }
+    if (val == 0) { buf[len++] = '0'; return len; }
+    char tmp[12];
+    uint16_t tlen = 0;
+    while (val > 0) { tmp[tlen++] = '0' + (val % 10); val /= 10; }
+    while (tlen > 0) { buf[len++] = tmp[--tlen]; }
+    return len;
+}
+
+static void debug_send_status(AppData_t *d)
+{
+    /* Build a human-readable status line via UART2 (iPad port)
+     * Format: "[HDICU] uptime=XXs temp=XX.X humid=XX o2=XX co2=XXXX hr=XX spo2=XX\r\n" */
+    char buf[128];
+    uint16_t pos = 0;
+    const char *hdr = "[HDICU] up=";
+    for (uint16_t i = 0; hdr[i]; i++) buf[pos++] = hdr[i];
+    pos += debug_itoa(d->system.boot_uptime_sec, &buf[pos]);
+    buf[pos++] = 's'; buf[pos++] = ' ';
+
+    const char *t = "T=";
+    for (uint16_t i = 0; t[i]; i++) buf[pos++] = t[i];
+    pos += debug_itoa(d->sensor.temperature_avg / 10, &buf[pos]);
+    buf[pos++] = '.';
+    int16_t frac = d->sensor.temperature_avg % 10;
+    if (frac < 0) frac = -frac;
+    buf[pos++] = '0' + frac;
+    buf[pos++] = ' ';
+
+    const char *h = "H=";
+    for (uint16_t i = 0; h[i]; i++) buf[pos++] = h[i];
+    pos += debug_itoa(d->sensor.humidity, &buf[pos]);
+    buf[pos++] = ' ';
+
+    const char *o = "O2=";
+    for (uint16_t i = 0; o[i]; i++) buf[pos++] = o[i];
+    pos += debug_itoa(d->sensor.o2_percent, &buf[pos]);
+    buf[pos++] = ' ';
+
+    const char *c = "CO2=";
+    for (uint16_t i = 0; c[i]; i++) buf[pos++] = c[i];
+    pos += debug_itoa(d->sensor.co2_ppm, &buf[pos]);
+    buf[pos++] = ' ';
+
+    const char *hr = "HR=";
+    for (uint16_t i = 0; hr[i]; i++) buf[pos++] = hr[i];
+    pos += debug_itoa(d->sensor.heart_rate, &buf[pos]);
+    buf[pos++] = ' ';
+
+    const char *sp = "SpO2=";
+    for (uint16_t i = 0; sp[i]; i++) buf[pos++] = sp[i];
+    pos += debug_itoa(d->sensor.spo2, &buf[pos]);
+
+    buf[pos++] = '\r'; buf[pos++] = '\n';
+
+    extern void bsp_uart_ipad_send(const uint8_t *data, uint16_t len);
+    bsp_uart_ipad_send((const uint8_t *)buf, pos);
+}
+#endif /* HDICU_DEBUG */
+
 static void SystemTask(void *arg)
 {
     (void)arg;
@@ -330,7 +396,10 @@ static void SystemTask(void *arg)
             flash_storage_save(d->system.total_runtime_min);
         }
 
-        /* TODO: HAL_IWDG_Refresh(&hiwdg); */
+#ifdef HDICU_DEBUG
+        /* Debug: output status via UART2 every second */
+        debug_send_status(d);
+#endif
 
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_SYSTEM_MS));
     }
