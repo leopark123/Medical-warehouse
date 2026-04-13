@@ -77,9 +77,14 @@ static void SensorTask(void *arg)
         d->sensor.o2_valid = o2_sensor_is_valid();
 
         /* --- JFC103 (UART5, data arrives via ISR) --- */
+        jfc103_sensor_tick();   /* Adaptive 0x8A management */
         d->sensor.heart_rate = jfc103_get_heart_rate();
         d->sensor.spo2 = jfc103_get_spo2();
         d->sensor.jfc103_valid = jfc103_is_valid();
+
+        /* --- Liquid level (PB14) + Urine detect (PB15) --- */
+        d->sensor.liquid_level = (uint8_t)HAL_GPIO_ReadPin(BSP_LIQUID_DETECT_PORT, BSP_LIQUID_DETECT_PIN);
+        d->sensor.urine_detect = (uint8_t)HAL_GPIO_ReadPin(BSP_URINE_DETECT_PORT, BSP_URINE_DETECT_PIN);
 
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_SENSOR_MS));
     }
@@ -115,6 +120,24 @@ static void ControlTask(void *arg)
         if (timer_counter >= 5) {
             timer_counter = 0;
             control_timers_tick_1s(d);
+        }
+
+        /* Apply nursing level LEDs (PB1=level1, PB0=level2, PC5=level3) */
+        HAL_GPIO_WritePin(BSP_LED_HULI1_PORT, BSP_LED_HULI1_PIN,
+                          (d->control.nursing_level_actual == 1) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LED_HULI2_PORT, BSP_LED_HULI2_PIN,
+                          (d->control.nursing_level_actual == 2) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LED_HULI3_PORT, BSP_LED_HULI3_PIN,
+                          (d->control.nursing_level_actual == 3) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        /* Timer expiry beep: countdown 200ms ticks for 3s beep duration.
+         * Actual PB3 driving is done by AlarmTask (single owner of buzzer GPIO).
+         * AlarmTask checks both buzzer_active and timer_beep_counter. */
+        if (d->control.timer_beep_counter > 0) {
+            d->control.timer_beep_counter--;
+            if (d->control.timer_beep_counter == 0) {
+                d->control.timer_beep_request = 0;
+            }
         }
 
         /* Apply physical outputs */
@@ -238,9 +261,12 @@ static void AlarmTask(void *arg)
         /* Buzzer: active if any alarm is latched and not yet acknowledged */
         d->alarm.buzzer_active = (d->alarm.alarm_flags != 0) && !d->alarm.acknowledged;
 
-        /* Drive buzzer GPIO */
-        HAL_GPIO_WritePin(BSP_BUZZER_PORT, BSP_BUZZER_PIN,
-                          d->alarm.buzzer_active ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        /* Drive buzzer GPIO — ON if alarm active OR timer beep active */
+        {
+            uint8_t buzzer_on = d->alarm.buzzer_active || (d->control.timer_beep_counter > 0);
+            HAL_GPIO_WritePin(BSP_BUZZER_PORT, BSP_BUZZER_PIN,
+                              buzzer_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        }
 
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_ALARM_MS));
     }
@@ -309,7 +335,7 @@ static void CommIPadTask(void *arg)
 /*  Runtime counting, flash save, watchdog                                   */
 /* ========================================================================= */
 /* Debug output — only compiled when HDICU_DEBUG is defined.
- * DO NOT enable in production: uses UART2 which is the iPad protocol port. */
+ * Sends status via UART4 (CN16/O2 port). DO NOT enable in production. */
 #ifdef HDICU_DEBUG
 static uint16_t debug_itoa(int32_t val, char *buf)
 {
@@ -325,7 +351,7 @@ static uint16_t debug_itoa(int32_t val, char *buf)
 
 static void debug_send_status(AppData_t *d)
 {
-    /* Build a human-readable status line via UART2 (iPad port)
+    /* Build a human-readable status line via UART4 (CN16)
      * Format: "[HDICU] uptime=XXs temp=XX.X humid=XX o2=XX co2=XXXX hr=XX spo2=XX\r\n" */
     char buf[128];
     uint16_t pos = 0;
@@ -369,9 +395,9 @@ static void debug_send_status(AppData_t *d)
 
     buf[pos++] = '\r'; buf[pos++] = '\n';
 
-    /* Debug output via UART1 (PA9 = P5 TX1), not UART2 (iPad protocol port) */
-    extern void bsp_uart_screen_send(const uint8_t *data, uint16_t len);
-    bsp_uart_screen_send((const uint8_t *)buf, pos);
+    /* Debug output via UART4 (PC10 = CN16), avoid polluting UART1 screen protocol */
+    extern void uart_driver_send(uint8_t ch, const uint8_t *data, uint16_t len);
+    uart_driver_send(3, (const uint8_t *)buf, pos);  /* 3 = UART_CH_O2 = UART4 */
 }
 #endif /* HDICU_DEBUG */
 
@@ -388,6 +414,9 @@ static void SystemTask(void *arg)
     uart_driver_start_rx();
 
     for (;;) {
+        /* Feed watchdog — IWDG ~4s timeout, SystemTask runs every 1s */
+        IWDG->KR = 0xAAAA;     /* Reload IWDG counter */
+
         /* Uptime */
         d->system.boot_uptime_sec++;
 
@@ -404,7 +433,7 @@ static void SystemTask(void *arg)
         }
 
 #ifdef HDICU_DEBUG
-        /* Debug: output status via UART2 every second */
+        /* Debug: output status via UART4 (CN16) every second */
         debug_send_status(d);
 #endif
 
@@ -417,10 +446,13 @@ static void SystemTask(void *arg)
 /* ========================================================================= */
 void tasks_create_all(void)
 {
-    xTaskCreate(SensorTask,     "Sensor",    TASK_STACK_SENSOR,      NULL, TASK_PRIO_SENSOR,      NULL);
-    xTaskCreate(ControlTask,    "Control",   TASK_STACK_CONTROL,     NULL, TASK_PRIO_CONTROL,     NULL);
-    xTaskCreate(AlarmTask,      "Alarm",     TASK_STACK_ALARM,       NULL, TASK_PRIO_ALARM,       NULL);
-    xTaskCreate(CommScreenTask, "CommScr",   TASK_STACK_COMM_SCREEN, NULL, TASK_PRIO_COMM_SCREEN, NULL);
-    xTaskCreate(CommIPadTask,   "CommIPad",  TASK_STACK_COMM_IPAD,   NULL, TASK_PRIO_COMM_IPAD,   NULL);
-    xTaskCreate(SystemTask,     "System",    TASK_STACK_SYSTEM,      NULL, TASK_PRIO_SYSTEM,      NULL);
+    extern void fatal_init_error(void);
+
+    /* Check each task creation individually — &= can mask failures */
+    if (xTaskCreate(SensorTask,     "Sensor",    TASK_STACK_SENSOR,      NULL, TASK_PRIO_SENSOR,      NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(ControlTask,    "Control",   TASK_STACK_CONTROL,     NULL, TASK_PRIO_CONTROL,     NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(AlarmTask,      "Alarm",     TASK_STACK_ALARM,       NULL, TASK_PRIO_ALARM,       NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(CommScreenTask, "CommScr",   TASK_STACK_COMM_SCREEN, NULL, TASK_PRIO_COMM_SCREEN, NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(CommIPadTask,   "CommIPad",  TASK_STACK_COMM_IPAD,   NULL, TASK_PRIO_COMM_IPAD,   NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(SystemTask,     "System",    TASK_STACK_SYSTEM,      NULL, TASK_PRIO_SYSTEM,      NULL) != pdPASS) fatal_init_error();
 }

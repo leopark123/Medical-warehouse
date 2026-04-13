@@ -88,12 +88,16 @@ bool interlock_apply(AppData_t *d)
 
         /* Inner cycle: FORBIDDEN — force off */
         d->control.switch_status &= ~SW_BIT_INNER_CYCLE;
-        /* TODO: When inner cycle has a dedicated relay, clear it here. */
+        /* CN32 FAI solenoid valve GPIO not yet defined in BSP. inner_cycle/fresh_air
+         * currently only sets software status bits (switch_status). Hardware output will
+         * be added after hardware engineer confirms CN32 GPIO pin. */
 
         /* Outer cycle: FORCED ON (= inner off, done above) */
         /* Fresh air: FORCED ON */
         d->control.switch_status |= SW_BIT_FRESH_AIR;
-        /* TODO: When fresh air has a dedicated relay/valve (CN32), set it here. */
+        /* CN32 FAI solenoid valve GPIO not yet defined in BSP. inner_cycle/fresh_air
+         * currently only sets software status bits (switch_status). Hardware output will
+         * be added after hardware engineer confirms CN32 GPIO pin. */
 
         /* Heating: FORBIDDEN */
         relay_clear(r, BSP_RELAY_PTC_IO);

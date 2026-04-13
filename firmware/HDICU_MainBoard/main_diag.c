@@ -84,14 +84,22 @@ static void test_timer(void)
 
 static void test_gpio(void)
 {
-    uart_send("[DIAG] GPIO PE2/PE3/PE4...");
+    uart_send("[DIAG] GPIO PE5/PE6/PC13...");
     __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Pin = GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
+
+    /* PE5/PE6 fan PWM pins */
+    gpio.Pin = GPIO_PIN_5 | GPIO_PIN_6;
     HAL_GPIO_Init(GPIOE, &gpio);
+
+    /* PC13 fan PWM pin */
+    gpio.Pin = GPIO_PIN_13;
+    HAL_GPIO_Init(GPIOC, &gpio);
+
     uart_send("OK\r\n");
 }
 
@@ -177,6 +185,11 @@ static void test_clock_hse(void)
 int main(void)
 {
     HAL_Init();
+
+    /* Release PB3/PB4/PA15 from JTAG to GPIO, keep SWD */
+    __HAL_RCC_AFIO_CLK_ENABLE();
+    __HAL_AFIO_REMAP_SWJ_NOJTAG();
+
     /* Start on HSI 8MHz, then optionally try HSE in test_clock_hse() */
     UART1_Init();
 

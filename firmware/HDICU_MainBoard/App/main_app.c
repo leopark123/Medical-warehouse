@@ -43,17 +43,63 @@
 QueueHandle_t g_ipad_rx_queue;
 QueueHandle_t g_screen_rx_queue;
 
+/**
+ * @brief Fatal init error — hang with buzzer on.
+ *        Called when RTOS resource creation fails (queues, tasks).
+ */
+void fatal_init_error(void)
+{
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = GPIO_PIN_3;  /* PB3 buzzer */
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    HAL_GPIO_Init(GPIOB, &gpio);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
+    for (;;) {}  /* Hang with buzzer on */
+}
+
 void app_init(void)
 {
     /* 1. Create RX queues BEFORE initializing UART (which enables interrupts) */
     g_ipad_rx_queue = xQueueCreate(UART_RX_QUEUE_LEN, sizeof(uint8_t));
     g_screen_rx_queue = xQueueCreate(UART_RX_QUEUE_LEN, sizeof(uint8_t));
+    if (!g_ipad_rx_queue || !g_screen_rx_queue) fatal_init_error();
 
     /* 2. Initialize hardware drivers */
     uart_driver_init();
     adc_driver_init();
     pwm_driver_init();
     relay_driver_init();
+
+    /* 2b. Initialize buzzer + nursing LED GPIOs (not in any driver module) */
+    {
+        __HAL_RCC_GPIOB_CLK_ENABLE();
+        __HAL_RCC_GPIOC_CLK_ENABLE();
+        GPIO_InitTypeDef gpio = {0};
+        gpio.Mode = GPIO_MODE_OUTPUT_PP;
+        gpio.Pull = GPIO_NOPULL;
+        gpio.Speed = GPIO_SPEED_FREQ_LOW;
+
+        /* Buzzer: PB3 */
+        gpio.Pin = BSP_BUZZER_PIN;
+        HAL_GPIO_Init(BSP_BUZZER_PORT, &gpio);
+        HAL_GPIO_WritePin(BSP_BUZZER_PORT, BSP_BUZZER_PIN, GPIO_PIN_RESET);
+
+        /* Nursing LEDs: PB1, PB0 (GPIOB) + PC5 (GPIOC) */
+        gpio.Pin = BSP_LED_HULI1_PIN | BSP_LED_HULI2_PIN;
+        HAL_GPIO_Init(BSP_LED_HULI1_PORT, &gpio);  /* GPIOB */
+        gpio.Pin = BSP_LED_HULI3_PIN;
+        HAL_GPIO_Init(BSP_LED_HULI3_PORT, &gpio);  /* GPIOC */
+        HAL_GPIO_WritePin(BSP_LED_HULI1_PORT, BSP_LED_HULI1_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LED_HULI2_PORT, BSP_LED_HULI2_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LED_HULI3_PORT, BSP_LED_HULI3_PIN, GPIO_PIN_RESET);
+
+        /* Liquid/Urine detect inputs: PB14, PB15 */
+        gpio.Mode = GPIO_MODE_INPUT;
+        gpio.Pull = GPIO_PULLUP;
+        gpio.Pin = BSP_LIQUID_DETECT_PIN | BSP_URINE_DETECT_PIN;
+        HAL_GPIO_Init(BSP_LIQUID_DETECT_PORT, &gpio);
+    }
 
     /* 3. Initialize central data hub with power-on defaults */
     app_data_init();

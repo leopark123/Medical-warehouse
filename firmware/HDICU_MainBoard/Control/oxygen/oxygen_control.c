@@ -9,8 +9,10 @@
 
 void oxygen_control_update(AppData_t *d)
 {
-    /* If O2 sensor is offline, hold current state — don't act on stale data */
+    /* FAIL-SAFE: O2 sensor offline → close O2 valve (except in manual open mode) */
     if (!d->sensor.o2_valid && d->control.o2_state != O2_STATE_OPEN_MODE) {
+        d->control.relay_status &= ~(1U << BSP_RELAY_O2_IO);
+        d->control.o2_state = O2_STATE_IDLE;
         return;
     }
 

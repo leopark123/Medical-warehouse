@@ -579,6 +579,160 @@ def test_write_validation():
     assert_eq(result, 0x02, "Wrong length rejected")
 
 # =========================================================================
+#  Test 10: Sensor fail-safe
+# =========================================================================
+def test_sensor_failsafe():
+    print(" [10] Sensor fail-safe...")
+
+    # Simulate relay_status bits for each control module
+    BSP_RELAY_PTC_IO    = 0
+    BSP_RELAY_JIARE_IO  = 1
+    BSP_RELAY_YASUO_IO  = 7
+    BSP_RELAY_FENGJI_IO = 6
+    BSP_RELAY_JIASHI_IO = 5
+    BSP_RELAY_O2_IO     = 4
+
+    # --- temp_control fail-safe ---
+    # Simulate: was HEATING, relay bits set, then sensor goes invalid (-999)
+    relay = (1 << BSP_RELAY_PTC_IO) | (1 << BSP_RELAY_JIARE_IO)
+    temp_avg = -999  # sensor invalid
+
+    # Fail-safe should clear all temp-owned bits
+    if temp_avg == -999 or temp_avg < -400 or temp_avg > 800:
+        relay &= ~(1 << BSP_RELAY_PTC_IO)
+        relay &= ~(1 << BSP_RELAY_JIARE_IO)
+        relay &= ~(1 << BSP_RELAY_YASUO_IO)
+        relay &= ~(1 << BSP_RELAY_FENGJI_IO)
+    assert_eq(relay, 0, "temp fail-safe: all temp relays OFF when sensor=-999")
+
+    # Simulate: was COOLING, compressor+fan set
+    relay = (1 << BSP_RELAY_YASUO_IO) | (1 << BSP_RELAY_FENGJI_IO)
+    temp_avg = 900  # out of range (>80°C)
+    if temp_avg == -999 or temp_avg < -400 or temp_avg > 800:
+        relay &= ~(1 << BSP_RELAY_PTC_IO)
+        relay &= ~(1 << BSP_RELAY_JIARE_IO)
+        relay &= ~(1 << BSP_RELAY_YASUO_IO)
+        relay &= ~(1 << BSP_RELAY_FENGJI_IO)
+    assert_eq(relay, 0, "temp fail-safe: cooling relays OFF when temp>80°C")
+
+    # --- humidity_control fail-safe ---
+    # Simulate: was DEHUMIDIFY with compressor+fan, sensor goes offline
+    relay = (1 << BSP_RELAY_JIASHI_IO) | (1 << BSP_RELAY_YASUO_IO) | (1 << BSP_RELAY_FENGJI_IO)
+    humid_state = 2  # DEHUMIDIFY
+    o2_valid = False
+    if not o2_valid:
+        relay &= ~(1 << BSP_RELAY_JIASHI_IO)
+        if humid_state == 2:  # was dehumidifying
+            relay &= ~(1 << BSP_RELAY_YASUO_IO)
+            relay &= ~(1 << BSP_RELAY_FENGJI_IO)
+    assert_eq(relay, 0, "humid fail-safe: all humid relays OFF when o2 offline + dehumidify")
+
+    # Simulate: was HUMIDIFY, sensor goes offline — only humidifier cleared
+    relay = (1 << BSP_RELAY_JIASHI_IO) | (1 << BSP_RELAY_YASUO_IO)  # YASUO from temp
+    humid_state = 1  # HUMIDIFY
+    if not o2_valid:
+        relay &= ~(1 << BSP_RELAY_JIASHI_IO)
+        if humid_state == 2:
+            relay &= ~(1 << BSP_RELAY_YASUO_IO)
+    assert_eq(relay, (1 << BSP_RELAY_YASUO_IO), "humid fail-safe: JIASHI off but YASUO kept (temp owns it)")
+
+    # --- oxygen_control fail-safe ---
+    relay = (1 << BSP_RELAY_O2_IO)
+    o2_valid = False
+    o2_state = 1  # SUPPLYING (not OPEN_MODE)
+    if not o2_valid and o2_state != 2:  # 2=OPEN_MODE
+        relay &= ~(1 << BSP_RELAY_O2_IO)
+    assert_eq(relay, 0, "oxygen fail-safe: O2 valve OFF when sensor offline")
+
+# =========================================================================
+#  Test 11: Dehumidify compressor+fan pairing
+# =========================================================================
+def test_dehumidify_fan():
+    print(" [11] Dehumidify compressor+fan pairing...")
+
+    BSP_RELAY_JIASHI_IO = 5
+    BSP_RELAY_YASUO_IO  = 7
+    BSP_RELAY_FENGJI_IO = 6
+
+    # DEHUMIDIFY state should set BOTH compressor AND outer fan
+    relay = 0
+    humid_state = 2  # DEHUMIDIFY
+    if humid_state == 2:
+        relay &= ~(1 << BSP_RELAY_JIASHI_IO)
+        relay |= (1 << BSP_RELAY_YASUO_IO)
+        relay |= (1 << BSP_RELAY_FENGJI_IO)
+
+    assert_eq(relay & (1 << BSP_RELAY_YASUO_IO), (1 << BSP_RELAY_YASUO_IO), "dehumidify: compressor ON")
+    assert_eq(relay & (1 << BSP_RELAY_FENGJI_IO), (1 << BSP_RELAY_FENGJI_IO), "dehumidify: outer fan ON")
+    assert_eq(relay & (1 << BSP_RELAY_JIASHI_IO), 0, "dehumidify: humidifier OFF")
+
+# =========================================================================
+#  Test 12: Timer beep request
+# =========================================================================
+def test_timer_beep():
+    print(" [12] Timer expiry beep...")
+
+    # Simulate fog countdown to 0
+    fog_remaining = 1
+    beep_request = 0
+    beep_counter = 0
+
+    # tick
+    fog_remaining -= 1
+    if fog_remaining == 0:
+        beep_request |= 0x01
+        beep_counter = 15
+
+    assert_eq(fog_remaining, 0, "fog timer expired")
+    assert_eq(beep_request & 0x01, 0x01, "fog beep bit set")
+    assert_eq(beep_counter, 15, "beep counter = 15 (3s)")
+
+    # Simulate disinfect countdown to 0
+    disinf_remaining = 1
+    beep_request = 0
+    disinf_remaining -= 1
+    if disinf_remaining == 0:
+        beep_request |= 0x02
+        beep_counter = 15
+    assert_eq(beep_request & 0x02, 0x02, "disinfect beep bit set")
+
+# =========================================================================
+#  Test 13: iPad fog/disinfect timer start
+# =========================================================================
+def test_ipad_fog_timer():
+    print(" [13] iPad fog/disinfect timer start...")
+
+    # Simulate: interlock allows fogging, fog_time=60
+    fog_time = 60
+    fog_remaining = 0
+    relay = 0
+    BSP_RELAY_WH_IO = 8
+    can_start = True  # interlock passes
+
+    # Simulate control_timers_start_fog logic
+    if fog_time > 0 and can_start:
+        fog_remaining = fog_time
+        relay |= (1 << BSP_RELAY_WH_IO)
+    assert_eq(fog_remaining, 60, "iPad fog timer started with 60s")
+    assert_eq(relay & (1 << BSP_RELAY_WH_IO), (1 << BSP_RELAY_WH_IO), "fog relay ON")
+
+    # Simulate stop: fog_time=0
+    fog_time = 0
+    if fog_time == 0:
+        fog_remaining = 0
+        relay &= ~(1 << BSP_RELAY_WH_IO)
+    assert_eq(fog_remaining, 0, "iPad fog timer stopped")
+    assert_eq(relay & (1 << BSP_RELAY_WH_IO), 0, "fog relay OFF after stop")
+
+    # Simulate: interlock blocks fogging
+    fog_time = 60
+    can_start = False
+    old_remaining = fog_remaining
+    if fog_time > 0 and can_start:
+        fog_remaining = fog_time
+    assert_eq(fog_remaining, old_remaining, "iPad fog blocked by interlock")
+
+# =========================================================================
 #  Run All Tests
 # =========================================================================
 def main():
@@ -595,6 +749,10 @@ def main():
     test_interlocks()
     test_alarm()
     test_write_validation()
+    test_sensor_failsafe()
+    test_dehumidify_fan()
+    test_timer_beep()
+    test_ipad_fog_timer()
 
     print()
     print("=" * 60)

@@ -197,10 +197,12 @@ P1(环境+框架) → P2(硬件驱动) ──┐
 | 8 | YASUO-IO | 220V | 空调压缩机 | ULN2001 (U34) |
 | 9 | WH-IO | 12V | 雾化器 | ULN2001 (U33) |
 
-PWM控制（非继电器）：
-- FENGJI-NEI-IO (PE2): 内循环风机
-- FENGJI-PTC-IO (PE3): PTC风机
-- FENGJI-NEI2-IO (PE4): 内循环风机2
+风机控制（原理图网表确认 2026-04-10，硬件工程师最终确认）：
+- FENGJI-NEI-IO (PE5): 内循环风机          ← ON/OFF only
+- FENGJI-PTC-EN (PE6): PTC风机使能         ← ON/OFF (enable gate)
+- FENGJI-PTC-PWM (PE9): PTC风机调速        ← PWM（唯一调速通道, TIM6 10kHz software PWM）
+- FENGJI-NEI2-IO (PC13): 空调内风机        ← ON/OFF only
+  注意：PC13为STM32F1低速IO(2MHz/3mA)，已配置GPIO_SPEED_FREQ_LOW。PE5/PE6/PC13仅ON/OFF，不输出PWM。
 
 ---
 
@@ -212,6 +214,13 @@ PWM控制（非继电器）：
 4. **FreeRTOS规范** — 任务间通信用队列/信号量，不用全局变量裸访问
 5. **不越界修改** — 只改 CURRENT_TASK.md 中声明的范围
 6. **不顺手重构** — 修审计项时不扩大修改范围
+7. **AFIO JTAG释放（强制）** — 所有含main()的文件必须在HAL_Init()之后立即加：
+   ```c
+   __HAL_RCC_AFIO_CLK_ENABLE();
+   __HAL_AFIO_REMAP_SWJ_NOJTAG();
+   ```
+   原因：PB3(蜂鸣器)和PB4(WH继电器)是JTAG复用引脚，不释放则GPIO输出无效。
+   此调用保留SWD(PA13/PA14)，不影响J-Link烧录调试。
 
 ---
 

@@ -97,7 +97,7 @@ JLink.exe -device STM32F103VE -if SWD -speed 1000 -autoconnect 1
   HSEON=1 HSERDY=1 PLLON=1 PLLRDY=1
   SWS=2 (PLL)
   SYSCLK=72MHz PCLK1=36MHz
-[DIAG] GPIO PE2/PE3/PE4...OK
+[DIAG] GPIO PE5/PE6/PC13...OK
 [DIAG] ADC init...OK
 [DIAG] TIM6 init...OK
 [DIAG] All peripheral tests done
@@ -137,15 +137,15 @@ JLink.exe -device STM32F103VE -if SWD -speed 1000 -autoconnect 1
 
 | 逻辑ID | 信号名 | 代码GPIO | 继电器动作? | 实测 |
 |--------|--------|---------|-----------|------|
-| 0 | PTC-IO | PD13(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 1 | JIARE-IO | PD14(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 2 | RED-IO | PD15(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 3 | ZIY-IO | PE7(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 4 | O2-IO | PE8(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 5 | JIASHI-IO | PE9(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 6 | FENGJI-IO | PE10(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 7 | YASUO-IO | PE11(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
-| 8 | WH-IO | PE12(占位) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 0 | PTC-IO | PE1(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 1 | JIARE-IO | PE0(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 2 | RED-IO | PB9(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 3 | ZIY-IO | PB8(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 4 | O2-IO | PB7(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 5 | JIASHI-IO | PE4(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 6 | FENGJI-IO | PE3(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 7 | YASUO-IO | PE2(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
+| 8 | WH-IO | PB4(原理图确认) | ☐吸合 ☐不动 | → 实际GPIO=____ |
 
 **如果继电器不动**：
 1. 用万用表量MCU引脚→ULN输入→ULN输出→继电器线圈的通路
@@ -153,20 +153,21 @@ JLink.exe -device STM32F103VE -if SWD -speed 1000 -autoconnect 1
 3. 记录到"实际GPIO"列
 4. 测试结束后更新 `relay_driver.c`
 
-#### 3.3 PWM输出测试
-逻辑分析仪接PE2/PE3/PE4，测试固件会输出不同占空比PWM：
+#### 3.3 PWM/风机输出测试
+示波器接PE9，逻辑分析仪接PE5/PE6/PC13（原理图确认）：
 
-- ☐ PE2：看到100Hz PWM，占空比30%→60%→100%循环
-- ☐ PE3：同上
-- ☐ PE4：同上
+- ☐ PE9（PTC风机调速）：示波器看到10kHz PWM，占空比30%→60%→100%循环
+- ☐ PE5（内循环风机）：ON/OFF翻转，高/低电平正确
+- ☐ PE6（PTC风机使能）：ON/OFF翻转，高/低电平正确
+- ☐ PC13（空调内风机）：ON/OFF翻转，高/低电平正确
 
 #### 3.4 LED测试
-- ☐ PD10 护理灯1 → 亮/灭
-- ☐ PD11 护理灯2 → 亮/灭
-- ☐ PD12 护理灯3 → 亮/灭
+- ☐ PB1 护理灯1 → 亮/灭（原理图确认）
+- ☐ PB0 护理灯2 → 亮/灭（原理图确认）
+- ☐ PC5 护理灯3 → 亮/灭（原理图确认）
 
 #### 3.5 蜂鸣器测试
-- ☐ PB0 → 蜂鸣器响/停
+- ☐ PB3 → 蜂鸣器响/停（原理图确认）
 
 #### 3.6 外循环/新风GPIO查找
 - ☐ 对照原理图，找到控制内/外循环电磁阀的MCU GPIO

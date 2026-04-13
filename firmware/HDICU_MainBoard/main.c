@@ -76,8 +76,22 @@ int main(void)
     /* HAL init (SysTick, NVIC priority grouping) */
     HAL_Init();
 
+    /* Release PB3/PB4/PA15 from JTAG to GPIO, keep SWD(PA13/PA14) */
+    __HAL_RCC_AFIO_CLK_ENABLE();
+    __HAL_AFIO_REMAP_SWJ_NOJTAG();
+
     /* Configure system clock to 72MHz */
     SystemClock_Config();
+
+    /* Independent Watchdog: ~4s timeout (LSI ~40kHz).
+     * Prescaler=64, Reload=2500 → 40000/64 = 625 Hz → 2500/625 = 4.0s.
+     * SystemTask (1s period) calls IWDG refresh via register write.
+     * If any task hangs, system resets after ~4 seconds.
+     * Using direct register access (no HAL IWDG driver needed). */
+    IWDG->KR  = 0x5555;        /* Enable register write access */
+    IWDG->PR  = 4;             /* Prescaler /64 */
+    IWDG->RLR = 2500;          /* Reload value */
+    IWDG->KR  = 0xCCCC;        /* Start IWDG */
 
     /* Application init — starts FreeRTOS, never returns */
     app_init();

@@ -123,7 +123,7 @@ C_DEFS = \
   -DSTM32F103xE \
   -DUSE_HAL_DRIVER
 
-CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) -Wall -Wextra -fdata-sections -ffunction-sections -std=c99
+CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) -Wall -Wextra -fdata-sections -ffunction-sections -std=c99 $(CFLAGS_EXTRA)
 ASFLAGS = $(MCU)
 
 # Release vs Debug

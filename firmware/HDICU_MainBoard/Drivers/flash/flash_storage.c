@@ -9,6 +9,8 @@
 #include "flash_storage.h"
 #include "bsp_config.h"
 #include "stm32f1xx_hal.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include <string.h>
 
 static FlashParams_t s_current;
@@ -91,7 +93,8 @@ bool flash_storage_init(void)
     bool v1 = read_page(1, &p1);
 
     if (v0 && v1) {
-        if (p0.version >= p1.version) {
+        /* Signed difference handles unsigned wraparound correctly */
+        if ((int32_t)(p0.version - p1.version) >= 0) {
             s_current = p0;
             s_next_page = 1;
         } else {
@@ -128,6 +131,11 @@ bool flash_storage_save(uint32_t runtime_min)
         return false;
     }
 
+    /* CRITICAL: Disable all interrupts during flash erase/program.
+     * STM32F1 flash bus stalls the CPU; if an ISR tries to fetch code
+     * from flash during erase of the same bank, a HardFault occurs. */
+    taskENTER_CRITICAL();
+
     /* Erase target page */
     bool ok = erase_page(addr);
 
@@ -135,6 +143,8 @@ bool flash_storage_save(uint32_t runtime_min)
     if (ok) {
         ok = write_params(addr, &new_params);
     }
+
+    taskEXIT_CRITICAL();
 
     /* Lock flash (always, even on failure) */
     HAL_FLASH_Lock();

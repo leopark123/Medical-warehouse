@@ -38,6 +38,8 @@ typedef struct {
     bool     co2_valid;         /* true if CO2 sensor responding */
     bool     o2_valid;          /* true if O2 sensor responding */
     bool     jfc103_valid;      /* true if JFC103 responding */
+    uint8_t  liquid_level;      /* 1=normal, 0=low (PB14, active low with pullup) */
+    uint8_t  urine_detect;      /* 1=normal, 0=detected (PB15, active low with pullup) */
 } SensorData_t;
 
 /* ========================================================================= */
@@ -103,6 +105,12 @@ typedef struct {
     #define SW_BIT_FRESH_AIR    0x02
     #define SW_BIT_OPEN_O2      0x04
     uint8_t  switch_status;
+
+    /* Timer expiry beep request: bit0=fog done, bit1=disinfect done.
+     * Set by control_timers when countdown reaches 0.
+     * Cleared by ControlTask after beep duration (3s). */
+    uint8_t  timer_beep_request;
+    uint8_t  timer_beep_counter;    /* ControlTask counts down 200ms ticks for beep duration */
 
     /* Fan speed applied (may differ from setpoint due to interlocks) */
     uint8_t  fan_speed_actual;

@@ -9,8 +9,16 @@
 
 void humidity_control_update(AppData_t *d)
 {
-    /* Humidity comes from O2 sensor — skip if offline */
+    /* Humidity comes from O2 sensor — FAIL-SAFE if offline */
     if (!d->sensor.o2_valid) {
+        uint16_t *r = &d->control.relay_status;
+        *r &= ~(1U << BSP_RELAY_JIASHI_IO);    /* Humidifier off */
+        /* Only clear compressor+fan if WE were using them (dehumidify) */
+        if (d->control.humid_state == HUMID_STATE_DEHUMIDIFY) {
+            *r &= ~(1U << BSP_RELAY_YASUO_IO);
+            *r &= ~(1U << BSP_RELAY_FENGJI_IO);
+        }
+        d->control.humid_state = HUMID_STATE_IDLE;
         return;
     }
 
@@ -44,14 +52,17 @@ void humidity_control_update(AppData_t *d)
     switch (d->control.humid_state) {
     case HUMID_STATE_IDLE:
         *r &= ~(1U << BSP_RELAY_JIASHI_IO);
+        /* NOTE: Do NOT clear YASUO here — temp_control owns compressor in non-dehumidify states.
+         * Clearing it here would fight with temp_control COOLING state. */
         break;
     case HUMID_STATE_HUMIDIFY:
         *r |= (1U << BSP_RELAY_JIASHI_IO);
         break;
     case HUMID_STATE_DEHUMIDIFY:
         *r &= ~(1U << BSP_RELAY_JIASHI_IO);
-        /* Engage cooling for dehumidification */
+        /* Engage cooling for dehumidification — compressor + outer fan must pair */
         *r |= (1U << BSP_RELAY_YASUO_IO);
+        *r |= (1U << BSP_RELAY_FENGJI_IO);
         break;
     }
 }

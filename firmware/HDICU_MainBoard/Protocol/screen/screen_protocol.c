@@ -24,57 +24,85 @@ void screen_send_display_data(void)
     uint8_t payload[SCR_DISPLAY_DATA_LEN];
     memset(payload, 0, sizeof(payload));
 
+    /* Snapshot shared fields under lock for a consistent packet */
+    int16_t  s_temp_avg;
+    uint8_t  s_humidity, s_o2_percent, s_heart_rate, s_spo2;
+    uint16_t s_co2_ppm;
+    uint8_t  s_fan_speed, s_nursing_level, s_light_status, s_switch_status;
+    uint16_t s_fog_rem, s_disinf_rem, s_o2_accum, s_relay_status;
+    uint16_t s_alarm_flags;
+
+    app_data_lock();
+    s_temp_avg      = d->sensor.temperature_avg;
+    s_humidity      = d->sensor.humidity;
+    s_o2_percent    = d->sensor.o2_percent;
+    s_co2_ppm       = d->sensor.co2_ppm;
+    s_heart_rate    = d->sensor.heart_rate;
+    s_spo2          = d->sensor.spo2;
+    s_fan_speed     = d->control.fan_speed_actual;
+    s_nursing_level = d->control.nursing_level_actual;
+    s_fog_rem       = d->control.fog_remaining;
+    s_disinf_rem    = d->control.disinfect_remaining;
+    s_o2_accum      = d->control.o2_accumulated;
+    s_relay_status  = d->control.relay_status;
+    s_light_status  = d->control.light_status;
+    s_switch_status = d->control.switch_status;
+    s_alarm_flags   = d->alarm.alarm_flags;
+    app_data_unlock();
+
+    /* Build packet from local snapshot — no lock needed */
+
     /* Bytes 0-1: Realtime temperature (int16, x10) */
-    payload[0] = (uint8_t)(d->sensor.temperature_avg >> 8);
-    payload[1] = (uint8_t)(d->sensor.temperature_avg & 0xFF);
+    payload[0] = (uint8_t)(s_temp_avg >> 8);
+    payload[1] = (uint8_t)(s_temp_avg & 0xFF);
 
     /* Byte 2: Realtime humidity (uint8, integer %) */
-    payload[2] = d->sensor.humidity;
+    payload[2] = s_humidity;
 
     /* Byte 3: Realtime O2 (uint8, integer %) */
-    payload[3] = d->sensor.o2_percent;
+    payload[3] = s_o2_percent;
 
     /* Bytes 4-5: Realtime CO2 (uint16, ppm) */
-    payload[4] = (uint8_t)(d->sensor.co2_ppm >> 8);
-    payload[5] = (uint8_t)(d->sensor.co2_ppm & 0xFF);
+    payload[4] = (uint8_t)(s_co2_ppm >> 8);
+    payload[5] = (uint8_t)(s_co2_ppm & 0xFF);
 
     /* Byte 6: Heart rate */
-    payload[6] = d->sensor.heart_rate;
+    payload[6] = s_heart_rate;
 
     /* Byte 7: SpO2 */
-    payload[7] = d->sensor.spo2;
+    payload[7] = s_spo2;
 
     /* Byte 8: Fan speed */
-    payload[8] = d->control.fan_speed_actual;
+    payload[8] = s_fan_speed;
 
     /* Byte 9: Nursing level */
-    payload[9] = d->control.nursing_level_actual;
+    payload[9] = s_nursing_level;
 
     /* Bytes 10-11: Fog remaining (seconds) */
-    payload[10] = (uint8_t)(d->control.fog_remaining >> 8);
-    payload[11] = (uint8_t)(d->control.fog_remaining & 0xFF);
+    payload[10] = (uint8_t)(s_fog_rem >> 8);
+    payload[11] = (uint8_t)(s_fog_rem & 0xFF);
 
     /* Bytes 12-13: Disinfect remaining */
-    payload[12] = (uint8_t)(d->control.disinfect_remaining >> 8);
-    payload[13] = (uint8_t)(d->control.disinfect_remaining & 0xFF);
+    payload[12] = (uint8_t)(s_disinf_rem >> 8);
+    payload[13] = (uint8_t)(s_disinf_rem & 0xFF);
 
     /* Bytes 14-15: O2 accumulated time */
-    payload[14] = (uint8_t)(d->control.o2_accumulated >> 8);
-    payload[15] = (uint8_t)(d->control.o2_accumulated & 0xFF);
+    payload[14] = (uint8_t)(s_o2_accum >> 8);
+    payload[15] = (uint8_t)(s_o2_accum & 0xFF);
 
     /* Bytes 16-17: Relay status bitmap */
-    payload[16] = (uint8_t)(d->control.relay_status >> 8);
-    payload[17] = (uint8_t)(d->control.relay_status & 0xFF);
+    payload[16] = (uint8_t)(s_relay_status >> 8);
+    payload[17] = (uint8_t)(s_relay_status & 0xFF);
 
     /* Byte 18: Light status */
-    payload[18] = d->control.light_status;
+    payload[18] = s_light_status;
 
     /* Byte 19: Switch status */
-    payload[19] = d->control.switch_status;
+    payload[19] = s_switch_status;
 
     /* Bytes 20-21: Alarm flags */
-    payload[20] = (uint8_t)(d->alarm.alarm_flags >> 8);
-    payload[21] = (uint8_t)(d->alarm.alarm_flags & 0xFF);
+    payload[20] = (uint8_t)(s_alarm_flags >> 8);
+    payload[21] = (uint8_t)(s_alarm_flags & 0xFF);
 
     /* Bytes 22-25: Reserved (zeroed) */
 
@@ -139,6 +167,10 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
         if (len < 2) break;
         uint8_t key_id = data[0];
         uint8_t action = data[1];
+        /* Lock shared data for all key actions that modify setpoints/relay_status.
+         * This prevents torn read-modify-write with ControlTask. */
+        app_data_lock();
+
         /* --- Single click actions --- */
         if (action == 0x01) {
             switch (key_id) {
@@ -205,6 +237,7 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
                 break;
             }
         }
+        app_data_unlock();
         break;
     }
 
@@ -221,6 +254,8 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
         extern void control_timers_start_disinfect(AppData_t *d, uint16_t duration_sec);
         extern void control_timers_reset_o2_accum(AppData_t *d);
 
+        /* Lock shared data — timer functions modify relay_status / control fields */
+        app_data_lock();
         switch (timer_type) {
         case 0x01: /* 雾化 */
             if (timer_cmd == 0x01)      control_timers_start_fog(d, duration);
@@ -236,6 +271,7 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
         default:
             break;
         }
+        app_data_unlock();
         break;
     }
 

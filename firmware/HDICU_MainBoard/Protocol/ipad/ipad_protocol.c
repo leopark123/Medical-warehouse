@@ -12,6 +12,7 @@
 #include "ipad_protocol.h"
 #include "protocol_defs.h"
 #include "app_data.h"
+#include "control_timers.h"
 #include "stm32f1xx_hal.h"
 #include <string.h>
 
@@ -40,57 +41,81 @@ static void build_params_response(void)
     uint8_t payload[IPAD_PARAMS_RSP_LEN];
     memset(payload, 0, sizeof(payload));
 
+    /* Snapshot shared fields under lock for a consistent response */
+    int16_t  s_temp_avg;
+    uint16_t s_humidity_raw, s_o2_raw, s_co2_ppm;
+    uint16_t s_fog_rem, s_disinf_rem, s_o2_accum;
+    uint8_t  s_fan_speed, s_nursing_level, s_switch_status, s_light_status;
+    uint32_t s_runtime_min;
+
+    app_data_lock();
+    s_temp_avg      = d->sensor.temperature_avg;
+    s_humidity_raw  = d->sensor.humidity_raw;
+    s_o2_raw        = d->sensor.o2_raw;
+    s_co2_ppm       = d->sensor.co2_ppm;
+    s_fog_rem       = d->control.fog_remaining;
+    s_disinf_rem    = d->control.disinfect_remaining;
+    s_fan_speed     = d->control.fan_speed_actual;
+    s_nursing_level = d->control.nursing_level_actual;
+    s_switch_status = d->control.switch_status;
+    s_light_status  = d->control.light_status;
+    s_o2_accum      = d->control.o2_accumulated;
+    s_runtime_min   = d->system.total_runtime_min;
+    app_data_unlock();
+
+    /* Build packet from local snapshot — no lock needed */
+
     /* Bytes 0-1: Realtime temperature (x10) */
-    payload[0] = (uint8_t)(d->sensor.temperature_avg >> 8);
-    payload[1] = (uint8_t)(d->sensor.temperature_avg & 0xFF);
+    payload[0] = (uint8_t)(s_temp_avg >> 8);
+    payload[1] = (uint8_t)(s_temp_avg & 0xFF);
 
     /* Bytes 2-3: Realtime humidity (x10) */
-    payload[2] = (uint8_t)(d->sensor.humidity_raw >> 8);
-    payload[3] = (uint8_t)(d->sensor.humidity_raw & 0xFF);
+    payload[2] = (uint8_t)(s_humidity_raw >> 8);
+    payload[3] = (uint8_t)(s_humidity_raw & 0xFF);
 
     /* Bytes 4-5: Realtime O2 (x10) */
-    payload[4] = (uint8_t)(d->sensor.o2_raw >> 8);
-    payload[5] = (uint8_t)(d->sensor.o2_raw & 0xFF);
+    payload[4] = (uint8_t)(s_o2_raw >> 8);
+    payload[5] = (uint8_t)(s_o2_raw & 0xFF);
 
     /* Bytes 6-7: Realtime CO2 (ppm) */
-    payload[6] = (uint8_t)(d->sensor.co2_ppm >> 8);
-    payload[7] = (uint8_t)(d->sensor.co2_ppm & 0xFF);
+    payload[6] = (uint8_t)(s_co2_ppm >> 8);
+    payload[7] = (uint8_t)(s_co2_ppm & 0xFF);
 
     /* Bytes 8-9: Remaining fog time (seconds) */
-    payload[8] = (uint8_t)(d->control.fog_remaining >> 8);
-    payload[9] = (uint8_t)(d->control.fog_remaining & 0xFF);
+    payload[8] = (uint8_t)(s_fog_rem >> 8);
+    payload[9] = (uint8_t)(s_fog_rem & 0xFF);
 
     /* Bytes 10-11: Remaining disinfect time */
-    payload[10] = (uint8_t)(d->control.disinfect_remaining >> 8);
-    payload[11] = (uint8_t)(d->control.disinfect_remaining & 0xFF);
+    payload[10] = (uint8_t)(s_disinf_rem >> 8);
+    payload[11] = (uint8_t)(s_disinf_rem & 0xFF);
 
     /* Byte 12: Current fan speed */
-    payload[12] = d->control.fan_speed_actual;
+    payload[12] = s_fan_speed;
 
     /* Byte 13: Current nursing level */
-    payload[13] = d->control.nursing_level_actual;
+    payload[13] = s_nursing_level;
 
     /* Byte 14: Inner/outer cycle status (SW_BIT_INNER_CYCLE) */
-    payload[14] = (d->control.switch_status & SW_BIT_INNER_CYCLE) ? 1 : 0;
+    payload[14] = (s_switch_status & SW_BIT_INNER_CYCLE) ? 1 : 0;
 
     /* Byte 15: Fresh air status (SW_BIT_FRESH_AIR) */
-    payload[15] = (d->control.switch_status & SW_BIT_FRESH_AIR) ? 1 : 0;
+    payload[15] = (s_switch_status & SW_BIT_FRESH_AIR) ? 1 : 0;
 
     /* Byte 16: Open O2 status (SW_BIT_OPEN_O2) */
-    payload[16] = (d->control.switch_status & SW_BIT_OPEN_O2) ? 1 : 0;
+    payload[16] = (s_switch_status & SW_BIT_OPEN_O2) ? 1 : 0;
 
     /* Byte 17: Light status */
-    payload[17] = d->control.light_status;
+    payload[17] = s_light_status;
 
     /* Bytes 18-19: O2 accumulated time (seconds) */
-    payload[18] = (uint8_t)(d->control.o2_accumulated >> 8);
-    payload[19] = (uint8_t)(d->control.o2_accumulated & 0xFF);
+    payload[18] = (uint8_t)(s_o2_accum >> 8);
+    payload[19] = (uint8_t)(s_o2_accum & 0xFF);
 
     /* Bytes 20-23: Total runtime (minutes), uint32 big-endian */
-    payload[20] = (uint8_t)(d->system.total_runtime_min >> 24);
-    payload[21] = (uint8_t)(d->system.total_runtime_min >> 16);
-    payload[22] = (uint8_t)(d->system.total_runtime_min >> 8);
-    payload[23] = (uint8_t)(d->system.total_runtime_min & 0xFF);
+    payload[20] = (uint8_t)(s_runtime_min >> 24);
+    payload[21] = (uint8_t)(s_runtime_min >> 16);
+    payload[22] = (uint8_t)(s_runtime_min >> 8);
+    payload[23] = (uint8_t)(s_runtime_min & 0xFF);
 
     /* Bytes 24-33: Reserved, already zeroed */
 
@@ -168,6 +193,12 @@ static void handle_write_params(const uint8_t *data, uint8_t len)
         d->setpoint.fresh_air       = fresh;
         d->setpoint.open_o2         = open_o2;
         d->setpoint.light_ctrl      = light;
+
+        /* Start/stop fog and disinfect timers (interlock pre-checked inside).
+         * fog=0 stops, fog>0 starts with that duration. Same for disinfect. */
+        control_timers_start_fog(d, fog);
+        control_timers_start_disinfect(d, disinf);
+
         app_data_unlock();
 
         ack[0] = IPAD_WRITE_OK;

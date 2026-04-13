@@ -5,7 +5,7 @@
 | 形态 | 编译选项 | 用途 | UART调试输出 |
 |------|---------|------|-------------|
 | **production** | 无额外宏 | 正式部署 | ❌ 无 |
-| **debug** | `-DHDICU_DEBUG` | 开发联调 | ✅ UART1每秒状态 |
+| **debug** | `-DHDICU_DEBUG` | 开发联调 | ✅ UART4(CN16) 9600 每秒状态 |
 | **diag** | 独立main_diag.c | 外设诊断 | ✅ UART1逐项测试 |
 | **test** | 独立main_test.c | 最小UART测试 | ✅ UART1心跳 |
 
@@ -65,7 +65,7 @@ export PATH="F:/ST/STM32CubeIDE_2.1.0/.../tools/bin:$PATH"
 # Production版本
 make clean && make
 
-# Debug版本（带UART1状态输出）
+# Debug版本（带UART4/CN16状态输出，9600 baud）
 make clean && make CFLAGS_EXTRA="-DHDICU_DEBUG"
 ```
 

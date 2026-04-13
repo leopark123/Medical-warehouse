@@ -6,7 +6,7 @@
  *
  * WARNING: Do NOT change these mappings without updating the frozen baseline.
  *          UART5 is JFC103, NOT WiFi (schematic label is outdated).
- *          PE4 is FENGJI-NEI2-IO (内循环风机2), NOT 新风风机.
+ *          GPIO pins updated to schematic netlist 2026-04-09.
  */
 
 #ifndef BSP_CONFIG_H
@@ -82,19 +82,32 @@
 /* ========================================================================= */
 /*  PWM — Fan Control (Frozen — 开发基线 2.1.4)                              */
 /* ========================================================================= */
-/* PE2 = FENGJI-NEI-IO  (内循环风机)   via AO3404 MOS */
-/* PE3 = FENGJI-PTC-IO  (PTC加热风机)  via AO3404 MOS */
-/* PE4 = FENGJI-NEI2-IO (内循环风机2)  via AO3404 MOS */
-#define BSP_PWM_FAN1_PORT           GPIOE
-#define BSP_PWM_FAN1_PIN            GPIO_PIN_2
-#define BSP_PWM_FAN2_PORT           GPIOE
-#define BSP_PWM_FAN2_PIN            GPIO_PIN_3
-#define BSP_PWM_FAN3_PORT           GPIOE
-#define BSP_PWM_FAN3_PIN            GPIO_PIN_4
+/* Schematic-confirmed fan pins (原理图 PIU24 NL网表 + 硬件工程师确认 2026-04-09)
+ *
+ * Hardware engineer: only PTC fan needs speed control (PE9=PWM).
+ *                    All other fans are ON/OFF only.
+ *
+ * PE5  = FENGJI-NEI-IO  (内循环风机)   via AO3404 — ON/OFF
+ * PE6  = FENGJI-PTC-IO  (PTC风机使能)  via AO3404 — ON/OFF (enable)
+ * PC13 = FENGJI-NEI2-IO (空调内风机)   via AO3404 — ON/OFF (low-speed IO)
+ * PE9  = PWM1           (PTC风机调速)               — PWM (唯一调速通道)
+ */
+#define BSP_FAN_NEI_PORT            GPIOE       /* PE5: 内循环风机 ON/OFF */
+#define BSP_FAN_NEI_PIN             GPIO_PIN_5
+#define BSP_FAN_PTC_EN_PORT         GPIOE       /* PE6: PTC风机使能 ON/OFF */
+#define BSP_FAN_PTC_EN_PIN          GPIO_PIN_6
+#define BSP_FAN_NEI2_PORT           GPIOC       /* PC13: 空调内风机 ON/OFF */
+#define BSP_FAN_NEI2_PIN            GPIO_PIN_13
+#define BSP_FAN_PTC_PWM_PORT        GPIOE       /* PE9: PTC风机调速 PWM */
+#define BSP_FAN_PTC_PWM_PIN         GPIO_PIN_9
 
-/* TODO: Confirm timer/channel assignment from CubeMX after project creation.
- * PE2/PE3/PE4 may not be standard TIM channels on STM32F103VET6.
- * If no timer remap available, use software PWM via GPIO toggle in SysTick/timer ISR. */
+/* Legacy aliases for code that uses BSP_PWM_FANx naming */
+#define BSP_PWM_FAN1_PORT           BSP_FAN_NEI_PORT
+#define BSP_PWM_FAN1_PIN            BSP_FAN_NEI_PIN
+#define BSP_PWM_FAN2_PORT           BSP_FAN_PTC_EN_PORT
+#define BSP_PWM_FAN2_PIN            BSP_FAN_PTC_EN_PIN
+#define BSP_PWM_FAN3_PORT           BSP_FAN_NEI2_PORT
+#define BSP_PWM_FAN3_PIN            BSP_FAN_NEI2_PIN
 
 /* ========================================================================= */
 /*  Relay Outputs (Frozen — 开发基线 2.1.5, ULN2003A/ULN2001 driven)         */
@@ -114,27 +127,35 @@
 /* ULN2001 (U33): 1 channel */
 #define BSP_RELAY_WH_IO             8   /* 雾化器, 12V */
 
+/* CN32 FAI solenoid valve (inner/outer cycle + fresh air) — GPIO TBD.
+ * Hardware engineer must confirm which MCU pin drives CN32.
+ * Until confirmed, inner_cycle/fresh_air only change software status bits. */
+/* #define BSP_RELAY_FAI_IO       9 */   /* Placeholder — DO NOT enable */
+
 #define BSP_RELAY_COUNT             9
 
-/* TODO: Map relay indices to GPIO port/pin after confirming from schematic.
- * These are logical IDs; physical GPIO mapping goes in Drivers/gpio/ */
+/* Relay logical IDs; physical GPIO mapping confirmed in Drivers/gpio/relay_driver.c */
 
 /* ========================================================================= */
 /*  Nursing Level LEDs (Frozen — 开发基线 2.1.4)                             */
 /* ========================================================================= */
-#define BSP_LED_HULI1_PORT          GPIOD
-#define BSP_LED_HULI1_PIN           GPIO_PIN_10
-#define BSP_LED_HULI2_PORT          GPIOD
-#define BSP_LED_HULI2_PIN           GPIO_PIN_11
-#define BSP_LED_HULI3_PORT          GPIOD
-#define BSP_LED_HULI3_PIN           GPIO_PIN_12
+/* Schematic-confirmed care LED pins (原理图 PIU24 NL网表) */
+#define BSP_LED_HULI1_PORT          GPIOB       /* PB1 = HULI01-IO */
+#define BSP_LED_HULI1_PIN           GPIO_PIN_1
+#define BSP_LED_HULI2_PORT          GPIOB       /* PB0 = HULI02-IO */
+#define BSP_LED_HULI2_PIN           GPIO_PIN_0
+#define BSP_LED_HULI3_PORT          GPIOC       /* PC5 = HULI03-IO */
+#define BSP_LED_HULI3_PIN           GPIO_PIN_5
 
 /* ========================================================================= */
 /*  Other I/O (Frozen — 开发基线 2.1.6)                                      */
 /* ========================================================================= */
+/* Schematic-confirmed: PB3 = BUZZER (原理图 PIU24089) */
 #define BSP_BUZZER_PORT             GPIOB
-#define BSP_BUZZER_PIN              GPIO_PIN_0
+#define BSP_BUZZER_PIN              GPIO_PIN_3
 
+/* Hardware engineer confirmed 2026-04-09: PB14=液位检测, PB15=尿液检测.
+ * Schematic NL labels (KEY3/KEY2) are net names, actual function is detect inputs. */
 #define BSP_LIQUID_DETECT_PORT      GPIOB
 #define BSP_LIQUID_DETECT_PIN       GPIO_PIN_14
 

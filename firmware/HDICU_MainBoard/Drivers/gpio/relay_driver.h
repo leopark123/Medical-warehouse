@@ -6,18 +6,18 @@
  *          GPIO pin mapping requires visual confirmation from schematic.
  *          The signal names and their MCU port/pin connections are:
  *
- *          TODO: Fill in after visual schematic review:
- *          Signal        | GPIO Port | GPIO Pin | ULN Chip
- *          --------------|-----------|----------|----------
- *          PTC-IO        | PD?       | ?        | U5
- *          JIARE-IO      | PD?       | ?        | U5
- *          RED-IO        | PD?       | ?        | U5
- *          ZIY-IO        | PD?       | ?        | U5
- *          O2-IO         | PD?       | ?        | U5
- *          JIASHI-IO     | PD?       | ?        | U34
- *          FENGJI-IO     | PD?       | ?        | U34
- *          YASUO-IO      | PD?       | ?        | U34
- *          WH-IO         | PD?       | ?        | U33
+ *          Schematic-confirmed GPIO (原理图 PIU24 NL网表 2026-04-09):
+ *          Signal        | GPIO | ULN Chip
+ *          --------------|------|----------
+ *          PTC-IO        | PE1  | U5
+ *          JIARE-IO      | PE0  | U5
+ *          RED-IO        | PB9  | U5
+ *          ZIY-IO        | PB8  | U5
+ *          O2-IO         | PB7  | U5
+ *          JIASHI-IO     | PE4  | U34
+ *          FENGJI-IO     | PE3  | U34
+ *          YASUO-IO      | PE2  | U34
+ *          WH-IO         | PB4  | U33
  */
 
 #ifndef RELAY_DRIVER_H

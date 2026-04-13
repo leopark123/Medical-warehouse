@@ -14,8 +14,10 @@
 
 int16_t ntc_adc_to_temp_x10(uint16_t adc_value)
 {
-    if (adc_value == 0 || adc_value >= 4095) {
-        return -999;    /* Invalid: open or shorted */
+    if (adc_value < 10 || adc_value > 4085) {
+        return -999;    /* Invalid: open(>4085) or shorted(<10).
+                         * ADC=4094 with NTC disconnected gives -90°C → false heating.
+                         * Widen deadband to catch near-rail readings. */
     }
 
     /* R_ntc = R_ref * ADC / (4095 - ADC) */
@@ -44,6 +46,8 @@ int16_t ntc_calc_average(const uint16_t adc_values[NTC_CHANNEL_COUNT],
         }
     }
 
-    if (count == 0) return 0;
+    if (count == 0) return -999;   /* CRITICAL: all 4 NTC invalid — must return -999
+                                     * so temp_control detects sensor failure and holds state.
+                                     * Returning 0 would be misread as 0.0°C → runaway heating */
     return (int16_t)(sum / count);
 }

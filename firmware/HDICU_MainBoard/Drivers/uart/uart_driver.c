@@ -119,6 +119,20 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
+/* Error callback — recover from ORE/FE/NE/PE by clearing errors and re-arming RX */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    for (int i = 0; i < UART_CH_COUNT; i++) {
+        if (huart->Instance == s_huart[i].Instance) {
+            /* Clear all error flags */
+            __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+            /* Re-arm single-byte receive after error recovery */
+            HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+            return;
+        }
+    }
+}
+
 /* Default weak implementation — override in app layer */
 __weak void uart_rx_callback(UartChannel_t ch, uint8_t byte)
 {

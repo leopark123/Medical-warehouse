@@ -9,7 +9,7 @@
  *          AlarmTask     | High     | 100ms   | Alarm detection + buzzer
  *          CommScreenTask| Medium   | 100ms   | Screen board communication
  *          CommIPadTask  | Medium   | Event   | iPad protocol handler
- *          SystemTask    | Low      | 1000ms  | Watchdog/time/flash save
+ *          SystemTask    | Low      | 1000ms  | IWDG feed/time/flash save
  */
 
 #ifndef TASK_DEFS_H

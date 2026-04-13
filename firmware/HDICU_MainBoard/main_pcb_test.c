@@ -19,7 +19,10 @@ static UART_HandleTypeDef huart1;
 
 static void uart_send(const char *s)
 {
-    HAL_UART_Transmit(&huart1, (uint8_t *)s, strlen(s), 200);
+    /* Output on both CN1(UART1) and CN16(UART4) */
+    uint16_t len = strlen(s);
+    HAL_UART_Transmit(&huart1, (uint8_t *)s, len, 200);
+    HAL_UART_Transmit(&huart4, (uint8_t *)s, len, 200);
 }
 
 static void uart_send_hex32(const char *label, uint32_t val)
@@ -30,7 +33,9 @@ static void uart_send_hex32(const char *label, uint32_t val)
     *p++ = '0'; *p++ = 'x';
     for (int i = 7; i >= 0; i--) *p++ = hex[(val >> (i*4)) & 0xF];
     *p++ = '\r'; *p++ = '\n';
-    HAL_UART_Transmit(&huart1, (uint8_t *)buf, p - buf, 200);
+    uint16_t len = p - buf;
+    HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, 200);
+    HAL_UART_Transmit(&huart4, (uint8_t *)buf, len, 200);
 }
 
 static void uart_send_int(const char *label, int32_t val)
@@ -43,22 +48,37 @@ static void uart_send_int(const char *label, int32_t val)
     else while (val > 0) { tmp[tl++] = '0' + (val % 10); val /= 10; }
     while (tl > 0) *p++ = tmp[--tl];
     *p++ = '\r'; *p++ = '\n';
-    HAL_UART_Transmit(&huart1, (uint8_t *)buf, p - buf, 200);
+    uint16_t len2 = p - buf;
+    HAL_UART_Transmit(&huart1, (uint8_t *)buf, len2, 200);
+    HAL_UART_Transmit(&huart4, (uint8_t *)buf, len2, 200);
 }
 
 /* ========== Init ========== */
 
+static UART_HandleTypeDef huart4;
+
 static void UART1_Init(void)
 {
+    /* Output on BOTH UART1(CN1/PA9) and UART4(CN16/PC10) simultaneously.
+     * CN16 confirmed working via USB-TTL. CN1 for screen board verification. */
     __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_USART1_CLK_ENABLE();
+    __HAL_RCC_UART4_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = GPIO_PIN_9;
     gpio.Mode = GPIO_MODE_AF_PP;
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+
+    /* UART1 TX = PA9 (CN1) */
+    gpio.Pin = GPIO_PIN_9;
     HAL_GPIO_Init(GPIOA, &gpio);
 
+    /* UART4 TX = PC10 (CN16) */
+    gpio.Pin = GPIO_PIN_10;
+    HAL_GPIO_Init(GPIOC, &gpio);
+
+    /* Init UART1 (CN1) */
     huart1.Instance = USART1;
     huart1.Init.BaudRate = 115200;
     huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -67,6 +87,16 @@ static void UART1_Init(void)
     huart1.Init.Mode = UART_MODE_TX;
     huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
     HAL_UART_Init(&huart1);
+
+    /* Init UART4 (CN16) */
+    huart4.Instance = UART4;
+    huart4.Init.BaudRate = 115200;
+    huart4.Init.WordLength = UART_WORDLENGTH_8B;
+    huart4.Init.StopBits = UART_STOPBITS_1;
+    huart4.Init.Parity = UART_PARITY_NONE;
+    huart4.Init.Mode = UART_MODE_TX;
+    huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    HAL_UART_Init(&huart4);
 }
 
 /* ========== Tests ========== */
@@ -79,15 +109,15 @@ typedef struct {
 } RelayTestEntry;
 
 static const RelayTestEntry relay_tests[] = {
-    { GPIOD, GPIO_PIN_13, "Relay0 PTC(PD13)" },
-    { GPIOD, GPIO_PIN_14, "Relay1 JIARE(PD14)" },
-    { GPIOD, GPIO_PIN_15, "Relay2 RED(PD15)" },
-    { GPIOE, GPIO_PIN_7,  "Relay3 ZIY(PE7)" },
-    { GPIOE, GPIO_PIN_8,  "Relay4 O2(PE8)" },
-    { GPIOE, GPIO_PIN_9,  "Relay5 JIASHI(PE9)" },
-    { GPIOE, GPIO_PIN_10, "Relay6 FENGJI(PE10)" },
-    { GPIOE, GPIO_PIN_11, "Relay7 YASUO(PE11)" },
-    { GPIOE, GPIO_PIN_12, "Relay8 WH(PE12)" },
+    { GPIOE, GPIO_PIN_1,  "Relay0 PTC(PE1)" },
+    { GPIOE, GPIO_PIN_0,  "Relay1 JIARE(PE0)" },
+    { GPIOB, GPIO_PIN_9,  "Relay2 RED(PB9)" },
+    { GPIOB, GPIO_PIN_8,  "Relay3 ZIY(PB8)" },
+    { GPIOB, GPIO_PIN_7,  "Relay4 O2(PB7)" },
+    { GPIOE, GPIO_PIN_4,  "Relay5 JIASHI(PE4)" },
+    { GPIOE, GPIO_PIN_3,  "Relay6 FENGJI(PE3)" },
+    { GPIOE, GPIO_PIN_2,  "Relay7 YASUO(PE2)" },
+    { GPIOB, GPIO_PIN_4,  "Relay8 WH(PB4)" },
 };
 
 static void test_relays(void)
@@ -95,7 +125,7 @@ static void test_relays(void)
     uart_send("\r\n[PCB] === Relay GPIO Test ===\r\n");
     uart_send("[PCB] Each relay ON 2s, OFF 1s. Listen for click.\r\n\r\n");
 
-    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
     __HAL_RCC_GPIOE_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
@@ -126,72 +156,115 @@ static void test_relays(void)
     uart_send("[PCB] Relay test complete.\r\n");
 }
 
-/* --- PWM GPIO Test --- */
-static void test_pwm_gpio(void)
+/* --- Fan GPIO Test (ON/OFF) + PE9 PWM Test --- */
+static void test_fan_gpio(void)
 {
-    uart_send("\r\n[PCB] === PWM GPIO Test (PE2/PE3/PE4) ===\r\n");
-    uart_send("[PCB] Toggle each pin at ~1Hz for 6s. Check with analyzer.\r\n\r\n");
+    uart_send("\r\n[PCB] === Fan GPIO Test ===\r\n");
+    uart_send("[PCB] PE5(NEI)=ON/OFF, PE6(PTC_EN)=ON/OFF, PC13(NEI2)=ON/OFF, PE9(PTC_PWM)=PWM\r\n\r\n");
 
     __HAL_RCC_GPIOE_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_NOPULL;
+
+    /* PE5 + PE6 + PE9 on GPIOE */
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    gpio.Pin = GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_9;
+    HAL_GPIO_Init(GPIOE, &gpio);
 
-    uint16_t pins[] = { GPIO_PIN_2, GPIO_PIN_3, GPIO_PIN_4 };
-    const char *names[] = { "PE2(NEI)", "PE3(PTC)", "PE4(NEI2)" };
+    /* PC13 on GPIOC (low speed) */
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    gpio.Pin = GPIO_PIN_13;
+    HAL_GPIO_Init(GPIOC, &gpio);
 
-    for (int i = 0; i < 3; i++) {
-        gpio.Pin = pins[i];
-        HAL_GPIO_Init(GPIOE, &gpio);
-    }
-
+    /* Part 1: ON/OFF toggle test for PE5/PE6/PC13 (6 cycles, 1Hz) */
+    uart_send("[PCB] --- ON/OFF test: PE5/PE6/PC13 toggle 1Hz x6 ---\r\n");
     for (int cycle = 0; cycle < 6; cycle++) {
-        for (int i = 0; i < 3; i++) {
-            HAL_GPIO_WritePin(GPIOE, pins[i], GPIO_PIN_SET);
-        }
-        uart_send("[PCB] PE2/PE3/PE4 HIGH\r\n");
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5 | GPIO_PIN_6, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+        uart_send("[PCB] PE5/PE6/PC13 HIGH\r\n");
         HAL_Delay(500);
 
-        for (int i = 0; i < 3; i++) {
-            HAL_GPIO_WritePin(GPIOE, pins[i], GPIO_PIN_RESET);
-        }
-        uart_send("[PCB] PE2/PE3/PE4 LOW\r\n");
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_5 | GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+        uart_send("[PCB] PE5/PE6/PC13 LOW\r\n");
         HAL_Delay(500);
     }
 
-    uart_send("[PCB] PWM GPIO test complete.\r\n");
+    /* Part 2: PE9 PWM test — software toggle at ~1kHz for 3s (scope visible) */
+    uart_send("[PCB] --- PE9 PWM test: ~1kHz 50%% duty for 3s ---\r\n");
+    uart_send("[PCB] Connect scope to PE9 now!\r\n");
+    HAL_Delay(1000);  /* Give user time to connect scope */
+    uint32_t start = HAL_GetTick();
+    while (HAL_GetTick() - start < 3000) {
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
+        for (volatile int i = 0; i < 100; i++) {}  /* ~500us delay */
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+        for (volatile int i = 0; i < 100; i++) {}  /* ~500us delay */
+    }
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+
+    /* Part 3: PE6+PE9 联动测试 — PE6=HIGH + PE9=PWM 3s */
+    uart_send("[PCB] --- PE6+PE9 combo: PE6=ON + PE9=PWM for 3s ---\r\n");
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_SET);
+    start = HAL_GetTick();
+    while (HAL_GetTick() - start < 3000) {
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_SET);
+        for (volatile int i = 0; i < 100; i++) {}
+        HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+        for (volatile int i = 0; i < 100; i++) {}
+    }
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_6, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_9, GPIO_PIN_RESET);
+
+    uart_send("[PCB] Fan GPIO test complete.\r\n");
 }
 
 /* --- LED Test --- */
 static void test_leds(void)
 {
-    uart_send("\r\n[PCB] === LED Test (PD10/PD11/PD12) ===\r\n");
+    uart_send("\r\n[PCB] === LED Test (PB1/PB0/PC5) ===\r\n");
 
-    __HAL_RCC_GPIOD_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    gpio.Pin = GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12;
-    HAL_GPIO_Init(GPIOD, &gpio);
 
-    for (int i = 0; i < 3; i++) {
-        uint16_t pin = (i == 0) ? GPIO_PIN_10 : (i == 1) ? GPIO_PIN_11 : GPIO_PIN_12;
-        const char *name = (i == 0) ? "HULI1(PD10)" : (i == 1) ? "HULI2(PD11)" : "HULI3(PD12)";
+    /* HULI1=PB1, HULI2=PB0 on GPIOB */
+    gpio.Pin = GPIO_PIN_1 | GPIO_PIN_0;
+    HAL_GPIO_Init(GPIOB, &gpio);
 
-        uart_send("[PCB] ");
-        uart_send(name);
-        uart_send(" ON\r\n");
-        HAL_GPIO_WritePin(GPIOD, pin, GPIO_PIN_SET);
-        HAL_Delay(1000);
+    /* HULI3=PC5 on GPIOC */
+    gpio.Pin = GPIO_PIN_5;
+    HAL_GPIO_Init(GPIOC, &gpio);
 
-        HAL_GPIO_WritePin(GPIOD, pin, GPIO_PIN_RESET);
-        uart_send("[PCB] ");
-        uart_send(name);
-        uart_send(" OFF\r\n");
-        HAL_Delay(500);
-    }
+    /* Test HULI1 (PB1) */
+    uart_send("[PCB] HULI1(PB1) ON\r\n");
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_RESET);
+    uart_send("[PCB] HULI1(PB1) OFF\r\n");
+    HAL_Delay(500);
+
+    /* Test HULI2 (PB0) */
+    uart_send("[PCB] HULI2(PB0) ON\r\n");
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    uart_send("[PCB] HULI2(PB0) OFF\r\n");
+    HAL_Delay(500);
+
+    /* Test HULI3 (PC5) */
+    uart_send("[PCB] HULI3(PC5) ON\r\n");
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+    uart_send("[PCB] HULI3(PC5) OFF\r\n");
+    HAL_Delay(500);
 
     uart_send("[PCB] LED test complete.\r\n");
 }
@@ -199,20 +272,20 @@ static void test_leds(void)
 /* --- Buzzer Test --- */
 static void test_buzzer(void)
 {
-    uart_send("\r\n[PCB] === Buzzer Test (PB0) ===\r\n");
+    uart_send("\r\n[PCB] === Buzzer Test (PB3) ===\r\n");
 
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_OUTPUT_PP;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    gpio.Pin = GPIO_PIN_0;
+    gpio.Pin = GPIO_PIN_3;
     HAL_GPIO_Init(GPIOB, &gpio);
 
     uart_send("[PCB] Buzzer ON (1s)\r\n");
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
     HAL_Delay(1000);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
     uart_send("[PCB] Buzzer OFF\r\n");
 }
 
@@ -292,6 +365,11 @@ static void test_inputs(void)
 int main(void)
 {
     HAL_Init();
+
+    /* Release PB3/PB4/PA15 from JTAG to GPIO, keep SWD */
+    __HAL_RCC_AFIO_CLK_ENABLE();
+    __HAL_AFIO_REMAP_SWJ_NOJTAG();
+
     UART1_Init();
 
     uart_send("\r\n\r\n");
@@ -308,7 +386,7 @@ int main(void)
     test_buzzer();
     test_adc();
     test_inputs();
-    test_pwm_gpio();
+    test_fan_gpio();
     test_relays();  /* Last because takes longest */
 
     uart_send("\r\n============================================\r\n");

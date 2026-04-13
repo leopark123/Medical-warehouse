@@ -15,8 +15,11 @@
 
 void jfc103_sensor_init(void);
 
-/* Send start command (0x8A) to begin data acquisition */
+/* Begin adaptive start sequence (sends 0x8A until data flows, then stops) */
 void jfc103_sensor_start(void);
+
+/* Call periodically (~100ms) to manage adaptive 0x8A keepalive */
+void jfc103_sensor_tick(void);
 
 /* Feed received byte from UART5 */
 void jfc103_sensor_rx_byte(uint8_t byte);

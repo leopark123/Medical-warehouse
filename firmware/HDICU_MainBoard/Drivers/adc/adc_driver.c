@@ -22,6 +22,10 @@ void adc_driver_init(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_ADC1_CLK_ENABLE();
 
+    /* ADC clock prescaler: must be <= 14MHz.
+     * APB2=72MHz -> /6 = 12MHz; APB2=8MHz(HSI) -> /2 = 4MHz (both OK) */
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_ADCPRE) | RCC_CFGR_ADCPRE_DIV6;
+
     GPIO_InitTypeDef gpio = {0};
     gpio.Mode = GPIO_MODE_ANALOG;
     gpio.Pin = BSP_ADC_NTC1_PIN | BSP_ADC_NTC2_PIN | BSP_ADC_NTC3_PIN | BSP_ADC_NTC4_PIN;
@@ -52,7 +56,10 @@ uint16_t adc_driver_read_channel(uint8_t ch_idx)
     HAL_ADC_ConfigChannel(&s_hadc1, &sConfig);
 
     HAL_ADC_Start(&s_hadc1);
-    HAL_ADC_PollForConversion(&s_hadc1, 10);
+    if (HAL_ADC_PollForConversion(&s_hadc1, 10) != HAL_OK) {
+        HAL_ADC_Stop(&s_hadc1);
+        return 0;   /* Timeout — return 0 which ntc_adc_to_temp_x10 treats as open circuit (-999) */
+    }
     uint16_t val = (uint16_t)HAL_ADC_GetValue(&s_hadc1);
     HAL_ADC_Stop(&s_hadc1);
 
@@ -74,6 +81,12 @@ void ADC1_2_IRQHandler(void)
 
 void ADC3_IRQHandler(void)
 {
-    /* ADC3 not used but interrupt may fire — just clear it */
-    HAL_ADC_IRQHandler(&s_hadc1);
+    /* ADC3 not used — just clear its interrupt flags directly.
+     * Do NOT pass s_hadc1 handle here as that would corrupt ADC1 state. */
+    if (ADC3->SR & ADC_SR_EOC) {
+        ADC3->SR &= ~ADC_SR_EOC;
+    }
+    if (ADC3->SR & ADC_SR_JEOC) {
+        ADC3->SR &= ~ADC_SR_JEOC;
+    }
 }
