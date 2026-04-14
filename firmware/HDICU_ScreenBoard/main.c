@@ -81,6 +81,31 @@
 /* NVIC */
 #define NVIC_ISER1          (*(volatile uint32_t *)0xE000E104)  /* IRQ 32-63 */
 
+/* IWDG (Independent Watchdog) — same register layout as STM32F10x */
+#define IWDG_BASE           0x40003000
+#define IWDG_KR             (*(volatile uint32_t *)(IWDG_BASE + 0x00))
+#define IWDG_PR             (*(volatile uint32_t *)(IWDG_BASE + 0x04))
+#define IWDG_RLR            (*(volatile uint32_t *)(IWDG_BASE + 0x08))
+#define IWDG_SR             (*(volatile uint32_t *)(IWDG_BASE + 0x0C))
+
+/* ========================================================================= */
+/*  IWDG — ~2s timeout watchdog (P2 fix)                                     */
+/* ========================================================================= */
+
+static void IWDG_Init(void)
+{
+    IWDG_KR  = 0x5555;     /* Enable register write */
+    IWDG_PR  = 4;          /* Prescaler /64: 40kHz/64 = 625Hz */
+    IWDG_RLR = 1250;       /* Reload: 1250/625 = 2.0s timeout */
+    while (IWDG_SR) {}     /* Wait until registers updated */
+    IWDG_KR  = 0xCCCC;     /* Start IWDG */
+}
+
+static void IWDG_Feed(void)
+{
+    IWDG_KR = 0xAAAA;      /* Reload counter */
+}
+
 /* ========================================================================= */
 /*  Global State                                                             */
 /* ========================================================================= */
@@ -216,7 +241,10 @@ void USART1_IRQHandler(void)
 static void uart1_send(const uint8_t *data, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++) {
-        while (!(USART1_SR & (1 << 7))) {}  /* Wait TXE */
+        uint32_t t0 = tick_ms();
+        while (!(USART1_SR & (1 << 7))) {   /* Wait TXE with timeout */
+            if (tick_ms() - t0 > 10) return; /* 10ms timeout per byte — bail out */
+        }
         USART1_DR = data[i];
     }
 }
@@ -310,7 +338,10 @@ static uint8_t uart2_rx_read(void)
 static void uart2_send(const uint8_t *data, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++) {
-        while (!(USART2_SR & (1 << 7))) {}  /* Wait TXE */
+        uint32_t t0 = tick_ms();
+        while (!(USART2_SR & (1 << 7))) {   /* Wait TXE with timeout */
+            if (tick_ms() - t0 > 10) return; /* 10ms timeout per byte — bail out */
+        }
         USART2_DR = data[i];
     }
 }
@@ -497,6 +528,7 @@ int main(void)
     UART1_Init();
     UART2_Init();
     TM1640_Init();
+    IWDG_Init();  /* P2 fix: 2s watchdog — resets MCU if main loop hangs */
 
     uint32_t last_heartbeat = 0;
     uint32_t last_display = 0;
@@ -519,6 +551,9 @@ int main(void)
         while (uart1_rx_available()) {
             parse_rx_byte(uart1_rx_read());
         }
+
+        /* Feed watchdog every loop iteration */
+        IWDG_Feed();
 
         /* Blink debug LED every 500ms — visible proof firmware is running */
         if (tick_ms() - last_blink >= 500) {
