@@ -1,0 +1,7 @@
+Time [s], Analyzer Name, Decoded Protocol Result
+0.000000000000000,Async Serial,'255'
+0.000283875000000,Async Serial,'255'
+0.004825083333333,Async Serial,'252'
+0.005118750000000,Async Serial,'248'
+0.006199541666667,Async Serial,'31' (framing error)
+0.008781541666667,Async Serial,'0' (framing error)

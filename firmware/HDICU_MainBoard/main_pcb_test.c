@@ -14,12 +14,13 @@
 void SysTick_Handler(void) { HAL_IncTick(); }
 
 static UART_HandleTypeDef huart1;
+static UART_HandleTypeDef huart4;
 
 /* ========== Helpers ========== */
 
 static void uart_send(const char *s)
 {
-    /* Output on both CN1(UART1) and CN16(UART4) */
+    /* Output on both CN3(UART1) and CN16(UART4) */
     uint16_t len = strlen(s);
     HAL_UART_Transmit(&huart1, (uint8_t *)s, len, 200);
     HAL_UART_Transmit(&huart4, (uint8_t *)s, len, 200);
@@ -55,12 +56,10 @@ static void uart_send_int(const char *label, int32_t val)
 
 /* ========== Init ========== */
 
-static UART_HandleTypeDef huart4;
-
 static void UART1_Init(void)
 {
-    /* Output on BOTH UART1(CN1/PA9) and UART4(CN16/PC10) simultaneously.
-     * CN16 confirmed working via USB-TTL. CN1 for screen board verification. */
+    /* Output on BOTH UART1(CN3/PA9) and UART4(CN16/PC10) simultaneously.
+     * CN16 confirmed working via USB-TTL. CN3 is screen board connector. */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_USART1_CLK_ENABLE();
@@ -70,7 +69,7 @@ static void UART1_Init(void)
     gpio.Mode = GPIO_MODE_AF_PP;
     gpio.Speed = GPIO_SPEED_FREQ_HIGH;
 
-    /* UART1 TX = PA9 (CN1) */
+    /* UART1 TX = PA9 (CN3, screen board connector) */
     gpio.Pin = GPIO_PIN_9;
     HAL_GPIO_Init(GPIOA, &gpio);
 
@@ -78,7 +77,7 @@ static void UART1_Init(void)
     gpio.Pin = GPIO_PIN_10;
     HAL_GPIO_Init(GPIOC, &gpio);
 
-    /* Init UART1 (CN1) */
+    /* Init UART1 (CN3) */
     huart1.Instance = USART1;
     huart1.Init.BaudRate = 115200;
     huart1.Init.WordLength = UART_WORDLENGTH_8B;

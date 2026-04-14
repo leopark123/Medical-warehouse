@@ -129,7 +129,7 @@ __HAL_AFIO_REMAP_SWJ_NOJTAG();
 
 ### 同期确认
 - HSE晶振72MHz正常（逻辑分析仪确认HSERDY=SET, PLLRDY=SET）
-- CN1电平转换有信号（逻辑分析仪CH1确认）
+- CN1/CN3电平转换有信号（逻辑分析仪确认。注：CN3=UART1屏幕板，CN1=UART5 JFC103）
 - tasks.c debug注释从"UART2"更正为"UART1"
 
 ---
