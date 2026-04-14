@@ -32,6 +32,9 @@ void screen_protocol_tick(uint32_t now_ms);
 
 bool screen_protocol_is_connected(void);
 
+/* Return tick of last successfully parsed frame (0 if none yet) */
+uint32_t screen_protocol_last_frame_tick(void);
+
 #ifdef __cplusplus
 }
 #endif

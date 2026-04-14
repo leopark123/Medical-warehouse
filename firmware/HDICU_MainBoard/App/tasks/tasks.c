@@ -306,8 +306,8 @@ static void CommScreenTask(void *arg)
     (void)arg;
     extern QueueHandle_t g_screen_rx_queue;
     uint32_t heartbeat_counter = 0;
-    uint32_t last_rx_ok_snapshot = 0;
-    uint32_t last_rx_check_tick = 0;
+    uint32_t last_frame_tick_snapshot = 0;
+    uint32_t last_wd_check_tick = 0;
     uint8_t screen_ever_connected = 0;  /* C3 fix: only enable watchdog after first connection */
 
     for (;;) {
@@ -338,18 +338,20 @@ static void CommScreenTask(void *arg)
         /* Check for disconnect */
         screen_protocol_tick(HAL_GetTick());
 
-        /* UART RX watchdog: if no new bytes for 10s, force-recover USART1.
+        /* Protocol-level watchdog: if no valid FRAME for 10s, force-recover USART1.
+         * P1-1 fix: uses frame timestamp instead of raw byte count, so noisy-but-
+         * no-valid-frame scenarios also trigger recovery.
          * Only active after screen has connected at least once (C3 fix). */
         if (screen_ever_connected) {
             uint32_t now = HAL_GetTick();
-            if (now - last_rx_check_tick >= 10000) {
-                last_rx_check_tick = now;
-                uint32_t current_rx_ok = g_uart_rx_ok[UART_CH_SCREEN];
-                if (current_rx_ok == last_rx_ok_snapshot) {
-                    /* No new bytes in 10s — force recover */
+            if (now - last_wd_check_tick >= 10000) {
+                last_wd_check_tick = now;
+                uint32_t cur_frame_tick = screen_protocol_last_frame_tick();
+                if (cur_frame_tick == last_frame_tick_snapshot) {
+                    /* No new valid frame in 10s — force recover */
                     uart_driver_recover_screen();
                 }
-                last_rx_ok_snapshot = current_rx_ok;
+                last_frame_tick_snapshot = cur_frame_tick;
             }
         }
 

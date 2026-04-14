@@ -136,6 +136,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             /* Re-arm single-byte receive */
             if (HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1) != HAL_OK) {
                 g_uart_rx_rearm_fail[i]++;
+                /* P1-2 fix: immediately flag recovery for screen channel */
+                if (i == UART_CH_SCREEN) {
+                    g_uart_screen_recover_pending = 1;
+                }
             }
             return;
         }

@@ -329,3 +329,8 @@ bool screen_protocol_is_connected(void)
 {
     return s_connected;
 }
+
+uint32_t screen_protocol_last_frame_tick(void)
+{
+    return s_last_rx_time_ms;
+}
