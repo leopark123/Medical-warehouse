@@ -81,6 +81,10 @@
 /* NVIC */
 #define NVIC_ISER1          (*(volatile uint32_t *)0xE000E104)  /* IRQ 32-63 */
 
+/* AFIO — needed to release PB3/PB4 from JTAG */
+#define AFIO_BASE           0x40010000
+#define AFIO_MAPR           (*(volatile uint32_t *)(AFIO_BASE + 0x04))
+
 /* IWDG (Independent Watchdog) — same register layout as STM32F10x */
 #define IWDG_BASE           0x40003000
 #define IWDG_KR             (*(volatile uint32_t *)(IWDG_BASE + 0x00))
@@ -97,7 +101,8 @@ static void IWDG_Init(void)
     IWDG_KR  = 0x5555;     /* Enable register write */
     IWDG_PR  = 4;          /* Prescaler /64: 40kHz/64 = 625Hz */
     IWDG_RLR = 1250;       /* Reload: 1250/625 = 2.0s timeout */
-    while (IWDG_SR) {}     /* Wait until registers updated */
+    /* Note: do NOT poll IWDG_SR — GD32F303 FWDGT_STAT may not clear as expected.
+     * PR/RLR values propagate within ~5 LSI cycles (~125µs), safe to proceed. */
     IWDG_KR  = 0xCCCC;     /* Start IWDG */
 }
 
@@ -494,26 +499,186 @@ static void Debug_LED_Toggle(void)
 }
 
 /* ========================================================================= */
-/*  TM1640 LED Driver (placeholder — will implement full driver later)       */
+/*  TM1640 LED Driver — bit-bang serial for U9 and U1                        */
+/*  U9: DIN=PB7, SCLK=PB6, GRID=DIG1-DIG11 (seg A-G+DP)                    */
+/*  U1: DIN=PB4, SCLK=PB3, GRID=DIGA1-DIGA13 (seg A1-G1+DP1)              */
+/*  Protocol: Start→CMD→Data→Stop, LSB first, CLK rising edge              */
 /* ========================================================================= */
 
-/* TODO: Implement TM1640 bit-bang driver for U1 and U9 */
-/* For now, just a stub that does nothing */
+/* Chip select */
+#define TM_CHIP_U9   0   /* DIN=PB7, CLK=PB6 */
+#define TM_CHIP_U1   1   /* DIN=PB4, CLK=PB3 */
+
+/* Pin bit positions */
+#define U9_DIN_BIT   7
+#define U9_CLK_BIT   6
+#define U1_DIN_BIT   4
+#define U1_CLK_BIT   3
+
+/* Inline helpers — set/clear via BSRR for atomic operation */
+static inline void tm_din_high(uint8_t chip) {
+    GPIOB_BSRR = (chip == TM_CHIP_U9) ? (1 << U9_DIN_BIT) : (1 << U1_DIN_BIT);
+}
+static inline void tm_din_low(uint8_t chip) {
+    GPIOB_BSRR = (chip == TM_CHIP_U9) ? (1 << (U9_DIN_BIT+16)) : (1 << (U1_DIN_BIT+16));
+}
+static inline void tm_clk_high(uint8_t chip) {
+    GPIOB_BSRR = (chip == TM_CHIP_U9) ? (1 << U9_CLK_BIT) : (1 << U1_CLK_BIT);
+}
+static inline void tm_clk_low(uint8_t chip) {
+    GPIOB_BSRR = (chip == TM_CHIP_U9) ? (1 << (U9_CLK_BIT+16)) : (1 << (U1_CLK_BIT+16));
+}
+
+static void tm_delay(void)
+{
+    /* ~1µs at 72MHz — TM1640 needs minimal setup/hold time */
+    for (volatile int i = 0; i < 10; i++) {}
+}
+
+/* Start condition: DIN goes LOW while CLK is HIGH */
+static void tm_start(uint8_t chip)
+{
+    tm_din_high(chip);
+    tm_clk_high(chip);
+    tm_delay();
+    tm_din_low(chip);
+    tm_delay();
+    tm_clk_low(chip);
+    tm_delay();
+}
+
+/* Stop condition: DIN goes HIGH while CLK is HIGH */
+static void tm_stop(uint8_t chip)
+{
+    tm_clk_low(chip);
+    tm_din_low(chip);
+    tm_delay();
+    tm_clk_high(chip);
+    tm_delay();
+    tm_din_high(chip);
+    tm_delay();
+}
+
+/* Write one byte, LSB first */
+static void tm_write_byte(uint8_t chip, uint8_t val)
+{
+    for (uint8_t i = 0; i < 8; i++) {
+        tm_clk_low(chip);
+        if (val & 0x01)
+            tm_din_high(chip);
+        else
+            tm_din_low(chip);
+        val >>= 1;
+        tm_delay();
+        tm_clk_high(chip);
+        tm_delay();
+    }
+}
+
+/* Write display data: auto-increment mode starting at address 0 */
+static void tm1640_write_display(uint8_t chip, const uint8_t *data, uint8_t len)
+{
+    /* Command 1: data write mode, auto-increment */
+    tm_start(chip);
+    tm_write_byte(chip, 0x40);
+    tm_stop(chip);
+
+    /* Command 2: set start address 0xC0 + write data */
+    tm_start(chip);
+    tm_write_byte(chip, 0xC0);
+    for (uint8_t i = 0; i < len; i++) {
+        tm_write_byte(chip, data[i]);
+    }
+    tm_stop(chip);
+}
+
+/* Set brightness: 0=off, 1-8=brightness levels */
+static void tm1640_set_brightness(uint8_t chip, uint8_t level)
+{
+    tm_start(chip);
+    if (level == 0)
+        tm_write_byte(chip, 0x80);       /* Display OFF */
+    else
+        tm_write_byte(chip, 0x87 + level); /* 0x88=dim ... 0x8F=max */
+    tm_stop(chip);
+}
+
+/* 7-segment digit font: bits = 0gfedcba (DP separate) */
+static const uint8_t SEG_FONT[12] = {
+    0x3F, /* 0: a+b+c+d+e+f     */
+    0x06, /* 1: b+c               */
+    0x5B, /* 2: a+b+d+e+g         */
+    0x4F, /* 3: a+b+c+d+g         */
+    0x66, /* 4: b+c+f+g           */
+    0x6D, /* 5: a+c+d+f+g         */
+    0x7D, /* 6: a+c+d+e+f+g       */
+    0x07, /* 7: a+b+c             */
+    0x7F, /* 8: a+b+c+d+e+f+g     */
+    0x6F, /* 9: a+b+c+d+f+g       */
+    0x00, /* 10: blank            */
+    0x40, /* 11: dash (-)         */
+};
+#define SEG_BLANK  10
+#define SEG_DASH   11
+
+/* Display buffers — 16 bytes per chip (GRID1-GRID16) */
+static uint8_t s_u9_buf[16];  /* U9: DIG1-DIG11 + unused */
+static uint8_t s_u1_buf[16];  /* U1: DIGA1-DIGA13 + unused */
 
 static void TM1640_Init(void)
 {
-    /* TODO: Configure DIN/SCLK GPIO pins as output */
-    /* TODO: Send initialization commands to both TM1640 chips */
+    /* Release PB3(JTDO) and PB4(JNTRST) from JTAG — SWJ_NOJTAG remap */
+    RCC_APB2ENR |= (1 << 0);   /* AFIO clock */
+    AFIO_MAPR = (AFIO_MAPR & ~(0x7 << 24)) | (0x2 << 24);  /* SWJ_CFG=010: SWD only */
+
+    /* Configure PB3/PB4/PB6/PB7 as push-pull output 2MHz */
+    /* CRL controls PB0-PB7, each pin = 4 bits */
+    uint32_t crl = GPIOB_CRL;
+    crl &= ~(0xF << 12);   /* PB3 bits[15:12] */
+    crl |=  (0x2 << 12);   /* PP output 2MHz */
+    crl &= ~(0xF << 16);   /* PB4 bits[19:16] */
+    crl |=  (0x2 << 16);
+    crl &= ~(0xF << 24);   /* PB6 bits[27:24] */
+    crl |=  (0x2 << 24);
+    crl &= ~(0xF << 28);   /* PB7 bits[31:28] */
+    crl |=  (0x2 << 28);
+    GPIOB_CRL = crl;
+
+    /* Start with all pins HIGH (idle state) */
+    GPIOB_BSRR = (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7);
+
+    /* Clear display buffers */
+    memset(s_u9_buf, 0, sizeof(s_u9_buf));
+    memset(s_u1_buf, 0, sizeof(s_u1_buf));
+
+    /* Initialize both chips: all segments off, brightness max */
+    tm1640_write_display(TM_CHIP_U9, s_u9_buf, 16);
+    tm1640_write_display(TM_CHIP_U1, s_u1_buf, 16);
+    tm1640_set_brightness(TM_CHIP_U9, 4);  /* Medium brightness */
+    tm1640_set_brightness(TM_CHIP_U1, 4);
 }
 
 static void TM1640_AllOn(void)
 {
-    /* TODO: Turn on all segments for testing */
+    memset(s_u9_buf, 0xFF, 16);
+    memset(s_u1_buf, 0xFF, 16);
+    tm1640_write_display(TM_CHIP_U9, s_u9_buf, 16);
+    tm1640_write_display(TM_CHIP_U1, s_u1_buf, 16);
 }
 
 static void TM1640_AllOff(void)
 {
-    /* TODO: Turn off all segments */
+    memset(s_u9_buf, 0, 16);
+    memset(s_u1_buf, 0, 16);
+    tm1640_write_display(TM_CHIP_U9, s_u9_buf, 16);
+    tm1640_write_display(TM_CHIP_U1, s_u1_buf, 16);
+}
+
+/* Flush display buffers to both chips */
+static void TM1640_Update(void)
+{
+    tm1640_write_display(TM_CHIP_U9, s_u9_buf, 16);
+    tm1640_write_display(TM_CHIP_U1, s_u1_buf, 16);
 }
 
 /* ========================================================================= */
@@ -535,12 +700,18 @@ int main(void)
     uint32_t last_blink = 0;
     uint8_t alarm_ack_counter = 0;
 
-    /* Fast blink 5 times at startup to confirm boot (100ms on/off) */
-    for (int i = 0; i < 10; i++) {
-        Debug_LED_Toggle();
+    /* Startup: all segments ON for 3s (lamp test), then clear */
+    TM1640_AllOn();
+    {
         uint32_t t0 = tick_ms();
-        while (tick_ms() - t0 < 100) {}
+        while (tick_ms() - t0 < 3000) {
+            IWDG_Feed();
+            Debug_LED_Toggle();
+            uint32_t t1 = tick_ms();
+            while (tick_ms() - t1 < 100) {}
+        }
     }
+    TM1640_AllOff();
 
     while (1) {
         /* Process UART RX bytes — primary on UART2 (CN12) */
