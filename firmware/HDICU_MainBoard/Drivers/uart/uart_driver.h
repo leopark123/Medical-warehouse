@@ -30,4 +30,15 @@ void uart_driver_send(UartChannel_t ch, const uint8_t *data, uint16_t len);
  * Called from ISR context! */
 void uart_rx_callback(UartChannel_t ch, uint8_t byte);
 
+/* Force-recover UART_CH_SCREEN — DeInit+Init+re-arm RX.
+ * Call from task context when screen RX appears stuck. */
+void uart_driver_recover_screen(void);
+
+/* Diagnostic counters (volatile, read from any context) */
+extern volatile uint32_t g_uart_rx_ok[UART_CH_COUNT];
+extern volatile uint32_t g_uart_rx_err[UART_CH_COUNT];
+extern volatile uint32_t g_uart_rx_rearm_fail[UART_CH_COUNT];
+extern volatile uint32_t g_uart_last_errcode[UART_CH_COUNT];
+extern volatile uint8_t  g_uart_screen_recover_pending;
+
 #endif

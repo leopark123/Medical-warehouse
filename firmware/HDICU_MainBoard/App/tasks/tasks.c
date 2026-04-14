@@ -31,6 +31,7 @@
 /* Protocol handlers */
 #include "ipad_protocol.h"
 #include "screen_protocol.h"
+#include "uart_driver.h"         /* g_uart_rx_ok[], uart_driver_recover_screen() */
 
 /* Flash storage */
 #include "flash_storage.h"
@@ -167,7 +168,18 @@ static void AlarmTask(void *arg)
     uint16_t humid_cnt = 0, o2_cnt = 0, co2_cnt = 0;
     uint16_t hr_cnt = 0, spo2_cnt = 0;
 
+    /* Startup grace period: skip COMM_FAULT for first 5s to let screen board boot */
+    uint32_t boot_tick = HAL_GetTick();
+    uint8_t grace = 1;
+
+    /* Buzzer intermittent blink counter (100ms ticks, period=10 → 1s cycle) */
+    static uint8_t buzzer_blink_cnt = 0;
+
     for (;;) {
+        /* End grace period after 5s */
+        if (grace && (HAL_GetTick() - boot_tick > 5000)) {
+            grace = 0;
+        }
         uint16_t flags = 0;
 
         /* Temperature: setpoint ± 5°C, 10s delay (skip if NTC invalid) */
@@ -230,13 +242,16 @@ static void AlarmTask(void *arg)
 
         /* === Comm fault alarm: separate path from sensor alarms === */
         /* ALARM_COMM_FAULT is set externally by screen_protocol_tick().
-         * It can only clear when screen is BACK ONLINE + user acknowledged. */
-        if (screen_protocol_is_connected()) {
-            /* Screen is online — comm fault condition resolved */
-            /* But don't clear the flag yet; need ack too */
-        } else {
-            /* Screen offline — latch comm fault */
-            flags |= ALARM_COMM_FAULT;
+         * It can only clear when screen is BACK ONLINE + user acknowledged.
+         * Skip during startup grace period to let screen board boot. */
+        if (!grace) {
+            if (screen_protocol_is_connected()) {
+                /* Screen is online — comm fault condition resolved */
+                /* But don't clear the flag yet; need ack too */
+            } else {
+                /* Screen offline — latch comm fault */
+                flags |= ALARM_COMM_FAULT;
+            }
         }
 
         /* Latch all new alarms (sensor + comm) into active set */
@@ -261,9 +276,19 @@ static void AlarmTask(void *arg)
         /* Buzzer: active if any alarm is latched and not yet acknowledged */
         d->alarm.buzzer_active = (d->alarm.alarm_flags != 0) && !d->alarm.acknowledged;
 
-        /* Drive buzzer GPIO — ON if alarm active OR timer beep active */
+        /* Drive buzzer GPIO — intermittent for alarm, continuous for timer beep */
         {
-            uint8_t buzzer_on = d->alarm.buzzer_active || (d->control.timer_beep_counter > 0);
+            uint8_t buzzer_on = 0;
+            if (d->control.timer_beep_counter > 0) {
+                buzzer_on = 1;  /* Timer expiry: continuous beep */
+            } else if (d->alarm.buzzer_active) {
+                /* Alarm: 500ms on / 500ms off (10 ticks × 100ms = 1s cycle) */
+                buzzer_blink_cnt++;
+                if (buzzer_blink_cnt >= 10) buzzer_blink_cnt = 0;
+                buzzer_on = (buzzer_blink_cnt < 5) ? 1 : 0;
+            } else {
+                buzzer_blink_cnt = 0;
+            }
             HAL_GPIO_WritePin(BSP_BUZZER_PORT, BSP_BUZZER_PIN,
                               buzzer_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
         }
@@ -281,18 +306,29 @@ static void CommScreenTask(void *arg)
     (void)arg;
     extern QueueHandle_t g_screen_rx_queue;
     uint32_t heartbeat_counter = 0;
+    uint32_t last_rx_ok_snapshot = 0;
+    uint32_t last_rx_check_tick = 0;
+    uint8_t screen_ever_connected = 0;  /* C3 fix: only enable watchdog after first connection */
 
     for (;;) {
+        /* B2 fix: check if ISR flagged a deferred recovery */
+        if (g_uart_screen_recover_pending) {
+            uart_driver_recover_screen();
+        }
+
         /* Drain RX queue — process bytes received from ISR in task context */
         uint8_t rx_byte;
         while (xQueueReceive(g_screen_rx_queue, &rx_byte, 0) == pdTRUE) {
             screen_protocol_rx_byte(rx_byte);
         }
 
-        /* Send 0x01 display data (26 bytes) */
-        screen_send_display_data();
+        /* Only send display data when screen is connected (C5 fix: reduce TX load) */
+        if (screen_protocol_is_connected()) {
+            screen_send_display_data();
+            screen_ever_connected = 1;
+        }
 
-        /* Heartbeat every 1s (100ms * 10) */
+        /* Heartbeat every 1s (100ms * 10) — always send so screen can detect us */
         heartbeat_counter++;
         if (heartbeat_counter >= 10) {
             heartbeat_counter = 0;
@@ -301,6 +337,21 @@ static void CommScreenTask(void *arg)
 
         /* Check for disconnect */
         screen_protocol_tick(HAL_GetTick());
+
+        /* UART RX watchdog: if no new bytes for 10s, force-recover USART1.
+         * Only active after screen has connected at least once (C3 fix). */
+        if (screen_ever_connected) {
+            uint32_t now = HAL_GetTick();
+            if (now - last_rx_check_tick >= 10000) {
+                last_rx_check_tick = now;
+                uint32_t current_rx_ok = g_uart_rx_ok[UART_CH_SCREEN];
+                if (current_rx_ok == last_rx_ok_snapshot) {
+                    /* No new bytes in 10s — force recover */
+                    uart_driver_recover_screen();
+                }
+                last_rx_ok_snapshot = current_rx_ok;
+            }
+        }
 
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_COMM_SCREEN_MS));
     }

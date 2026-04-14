@@ -11,6 +11,15 @@
 static UART_HandleTypeDef s_huart[UART_CH_COUNT];
 static uint8_t s_rx_byte[UART_CH_COUNT];   /* Single-byte RX buffers for IT mode */
 
+/* Diagnostic counters — accessible via uart_driver_get_diag() */
+volatile uint32_t g_uart_rx_ok[UART_CH_COUNT];
+volatile uint32_t g_uart_rx_err[UART_CH_COUNT];
+volatile uint32_t g_uart_rx_rearm_fail[UART_CH_COUNT];
+volatile uint32_t g_uart_last_errcode[UART_CH_COUNT];
+
+/* Deferred recovery flag — ISR sets, task clears (B2 fix) */
+volatile uint8_t g_uart_screen_recover_pending;
+
 /* UART configuration table */
 static const struct {
     USART_TypeDef   *instance;
@@ -103,6 +112,17 @@ void uart_driver_start_rx(void)
 void uart_driver_send(UartChannel_t ch, const uint8_t *data, uint16_t len)
 {
     if (ch >= UART_CH_COUNT) return;
+    if (ch == UART_CH_SCREEN) {
+        /* Bypass HAL for screen TX to avoid huart->Lock contention
+         * with HAL_UART_Receive_IT in the RX callback (B1 fix). */
+        USART_TypeDef *uart = s_uart_config[ch].instance;
+        for (uint16_t i = 0; i < len; i++) {
+            while (!(uart->SR & USART_SR_TXE)) {}
+            uart->DR = data[i];
+        }
+        while (!(uart->SR & USART_SR_TC)) {}  /* Wait last byte complete */
+        return;
+    }
     HAL_UART_Transmit(&s_huart[ch], (uint8_t *)data, len, 100);
 }
 
@@ -111,9 +131,12 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     for (int i = 0; i < UART_CH_COUNT; i++) {
         if (huart->Instance == s_huart[i].Instance) {
+            g_uart_rx_ok[i]++;
             uart_rx_callback((UartChannel_t)i, s_rx_byte[i]);
             /* Re-arm single-byte receive */
-            HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+            if (HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1) != HAL_OK) {
+                g_uart_rx_rearm_fail[i]++;
+            }
             return;
         }
     }
@@ -124,10 +147,19 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     for (int i = 0; i < UART_CH_COUNT; i++) {
         if (huart->Instance == s_huart[i].Instance) {
-            /* Clear all error flags */
-            __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
-            /* Re-arm single-byte receive after error recovery */
-            HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+            g_uart_rx_err[i]++;
+            g_uart_last_errcode[i] = huart->ErrorCode;
+
+            if (i == UART_CH_SCREEN) {
+                /* Defer heavy recovery to task context (B2 fix).
+                 * ISR only clears error flags and sets pending flag. */
+                __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+                g_uart_screen_recover_pending = 1;
+            } else {
+                /* Light recovery for other channels */
+                __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+                HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+            }
             return;
         }
     }
@@ -138,6 +170,31 @@ __weak void uart_rx_callback(UartChannel_t ch, uint8_t byte)
 {
     (void)ch;
     (void)byte;
+}
+
+/* Force-recover UART_CH_SCREEN — call from CommScreenTask (task context only).
+ * Uses NVIC-level disable instead of __disable_irq to avoid blocking other UARTs (B3 fix). */
+void uart_driver_recover_screen(void)
+{
+    int i = UART_CH_SCREEN;
+    HAL_NVIC_DisableIRQ(USART1_IRQn);
+
+    HAL_UART_AbortReceive_IT(&s_huart[i]);
+    HAL_UART_DeInit(&s_huart[i]);
+
+    s_huart[i].Instance = s_uart_config[i].instance;
+    s_huart[i].Init.BaudRate = s_uart_config[i].baudrate;
+    s_huart[i].Init.WordLength = UART_WORDLENGTH_8B;
+    s_huart[i].Init.StopBits = UART_STOPBITS_1;
+    s_huart[i].Init.Parity = UART_PARITY_NONE;
+    s_huart[i].Init.Mode = UART_MODE_TX_RX;
+    s_huart[i].Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    HAL_UART_Init(&s_huart[i]);
+
+    __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+    HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+    g_uart_screen_recover_pending = 0;
+    HAL_NVIC_EnableIRQ(USART1_IRQn);
 }
 
 /* ===== IRQ Handlers — forward to HAL ===== */
