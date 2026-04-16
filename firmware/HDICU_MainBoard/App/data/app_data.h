@@ -40,6 +40,7 @@ typedef struct {
     bool     jfc103_valid;      /* true if JFC103 responding */
     uint8_t  liquid_level;      /* 1=normal, 0=low (PB14, active low with pullup) */
     uint8_t  urine_detect;      /* 1=normal, 0=detected (PB15, active low with pullup) */
+    uint8_t  _pad;              /* Explicit padding to ensure 2-byte alignment for next struct */
 } SensorData_t;
 
 /* ========================================================================= */

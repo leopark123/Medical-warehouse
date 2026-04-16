@@ -5,6 +5,7 @@
 
 #include "screen_protocol.h"
 #include "bsp_config.h"
+#include "control_timers.h"
 #include <string.h>
 
 extern void bsp_uart_screen_send(const uint8_t *data, uint16_t len);
@@ -159,10 +160,12 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
 
     case SCR_CMD_KEY_ACTION: {
         /* 0x82: KeyID(1B) + ActionType(1B)
-         * Key IDs per frozen spec 5.5.2:
-         * 0x01=护理等级灯 0x02=照明灯 0x03=检查灯 0x04=红外灯
-         * 0x05=紫外灯 0x06=开放式供氧 0x07=内/外循环 0x08=新风净化
-         * 0x09=报警确认 0x0A=编码器按下
+         * Key IDs per spec (功能表.pdf + frozen spec 5.5.2):
+         * 0x01=护理等级灯(#11)   0x02=照明灯(#8 bit1)   0x03=检查灯(#8 bit0)
+         * 0x04=红蓝光LED治疗灯(#8 bit2+bit3, CN36 L-LMP)
+         * 0x05=紫外灯(#6 启动/停止消毒定时周期, NOT direct relay toggle)
+         * 0x06=开放式供氧(#12)   0x07=内/外循环(#9)     0x08=新风净化(#13)
+         * 0x09=报警确认          0x0A=编码器按下
          * ActionType: 0x01=单击 0x02=长按 0x03=按下 0x04=松开 */
         if (len < 2) break;
         uint8_t key_id = data[0];
@@ -183,27 +186,26 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
             case 0x03: /* 检查灯 toggle (light_ctrl bit0) */
                 d->setpoint.light_ctrl ^= 0x01;
                 break;
-            case 0x04: /* 红外灯 toggle — RELAY controlled (BSP_RELAY_RED_IO)
-                        * 红外灯 is a 220V device via relay, not an LED bit. */
-            {
-                uint16_t *r = &d->control.relay_status;
-                *r ^= (1U << BSP_RELAY_RED_IO);
+            case 0x04: /* 红蓝光 LED治疗灯 — CN36 L-LMP 控制板
+                        * 功能表 #8: 检查灯/照明/蓝光/红光 为同一控制板的4个灯。
+                        * "红蓝光"面板按钮同时控制 蓝(bit2) + 红(bit3) 治疗LED。
+                        * 低压LED经 light_ctrl 位图驱动，非220V红外灯继电器。 */
+                d->setpoint.light_ctrl ^= 0x0C;  /* bit2=蓝, bit3=红 */
                 break;
-            }
-            case 0x05: /* 紫外灯 toggle — RELAY controlled (BSP_RELAY_ZIY_IO) */
-            {
-                extern bool interlock_can_start_uv(const AppData_t *d);
-                uint16_t *r = &d->control.relay_status;
-                if (*r & (1U << BSP_RELAY_ZIY_IO)) {
-                    *r &= ~(1U << BSP_RELAY_ZIY_IO);
-                    d->control.disinfect_remaining = 0;
-                } else {
-                    if (interlock_can_start_uv(d)) {
-                        *r |= (1U << BSP_RELAY_ZIY_IO);
-                    }
+
+            case 0x05: /* 紫外灯 = 启动/停止当前消毒定时周期
+                        * 功能表 #6 规定: 紫外灯只能由消毒定时器触发。
+                        * 本按键不直接翻转继电器，而是切换定时器状态：
+                        *   有计时在进行 → 立即停止（关闭UV）
+                        *   有预设时长但未启动 → 启动定时周期（由互锁检查）
+                        *   未预设时长 → 忽略（防止常亮安全风险） */
+                if (d->control.disinfect_remaining > 0) {
+                    control_timers_start_disinfect(d, 0);  /* 0 = stop + OFF */
+                } else if (d->setpoint.disinfect_time > 0) {
+                    control_timers_start_disinfect(d, d->setpoint.disinfect_time);
                 }
+                /* else: no preset time → ignore for safety */
                 break;
-            }
             case 0x06: /* 开放式供氧 toggle */
                 d->setpoint.open_o2 = d->setpoint.open_o2 ? 0 : 1;
                 break;
