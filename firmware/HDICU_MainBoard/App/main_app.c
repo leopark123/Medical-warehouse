@@ -99,6 +99,29 @@ void app_init(void)
         gpio.Pull = GPIO_PULLUP;
         gpio.Pin = BSP_LIQUID_DETECT_PIN | BSP_URINE_DETECT_PIN;
         HAL_GPIO_Init(BSP_LIQUID_DETECT_PORT, &gpio);
+
+        /* 2c. Additional GPIO outputs (硬件工程师确认 2026-04-16) */
+        __HAL_RCC_GPIOE_CLK_ENABLE();  /* Explicit, even though relay_driver already enables */
+
+        gpio.Mode = GPIO_MODE_OUTPUT_PP;
+        gpio.Pull = GPIO_NOPULL;
+        gpio.Speed = GPIO_SPEED_FREQ_LOW;
+
+        /* PE10-PE13: U32照明灯4色 (高电平亮) + PE7: 推拉电磁铁(内/外循环) */
+        gpio.Pin = BSP_LIGHT_LED1_PIN | BSP_LIGHT_LED2_PIN |
+                   BSP_LIGHT_LED3_PIN | BSP_LIGHT_LED4_PIN |
+                   BSP_MAGNET_PIN;
+        HAL_GPIO_Init(GPIOE, &gpio);
+        HAL_GPIO_WritePin(GPIOE,
+                          BSP_LIGHT_LED1_PIN | BSP_LIGHT_LED2_PIN |
+                          BSP_LIGHT_LED3_PIN | BSP_LIGHT_LED4_PIN |
+                          BSP_MAGNET_PIN,
+                          GPIO_PIN_RESET);
+
+        /* PB5: GY-IO制氧机信号 + PB12: 压缩机指示灯 */
+        gpio.Pin = BSP_GY_PIN | BSP_COMPRESSOR_LED_PIN;
+        HAL_GPIO_Init(GPIOB, &gpio);
+        HAL_GPIO_WritePin(GPIOB, BSP_GY_PIN | BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
     }
 
     /* 3. Initialize central data hub with power-on defaults */

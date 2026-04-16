@@ -145,6 +145,41 @@ static void ControlTask(void *arg)
         relay_driver_apply(d->control.relay_status);
         pwm_set_fan_speed(d->control.fan_speed_actual);
 
+        /* === Additional GPIO outputs (硬件確認 2026-04-16) === */
+
+        /* Task1: U32照明灯4色 — light_ctrl bit0-3 → PE10-PE13, 高电平亮 */
+        HAL_GPIO_WritePin(BSP_LIGHT_LED1_PORT, BSP_LIGHT_LED1_PIN,
+                          (d->control.light_status & (1U << 0)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LIGHT_LED2_PORT, BSP_LIGHT_LED2_PIN,
+                          (d->control.light_status & (1U << 1)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LIGHT_LED3_PORT, BSP_LIGHT_LED3_PIN,
+                          (d->control.light_status & (1U << 2)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_LIGHT_LED4_PORT, BSP_LIGHT_LED4_PIN,
+                          (d->control.light_status & (1U << 3)) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        /* Task2: 内/外循环电磁铁 — 基于互锁后的switch_status, 非setpoint */
+        HAL_GPIO_WritePin(BSP_MAGNET_PORT, BSP_MAGNET_PIN,
+                          (d->control.switch_status & SW_BIT_INNER_CYCLE) ?
+                          GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        /* Task4: 压缩机指示灯 — 跟随relay_status中YASUO_IO位 */
+        HAL_GPIO_WritePin(BSP_COMPRESSOR_LED_PORT, BSP_COMPRESSOR_LED_PIN,
+                          (d->control.relay_status & (1U << BSP_RELAY_YASUO_IO)) ?
+                          GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        /* Task5: 制氧机信号 — 跟随relay_status中O2_IO位(互锁后的实际状态) */
+        HAL_GPIO_WritePin(BSP_GY_PORT, BSP_GY_PIN,
+                          (d->control.relay_status & (1U << BSP_RELAY_O2_IO)) ?
+                          GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        /* Task3: 新风净化 → PTC风机全速通风
+         * fresh_air=1时强制PTC风机100%。temp_control可能已设duty(加热安全),
+         * 此处取 max(temp_safety_duty, 100%) = 100%，最后调用者覆盖。
+         * fresh_air=0时不干预，由temp_control自行管理PTC风机。 */
+        if (d->control.switch_status & SW_BIT_FRESH_AIR) {
+            pwm_set_fan2_duty(100);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_CONTROL_MS));
     }
 }

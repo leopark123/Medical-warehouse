@@ -695,21 +695,26 @@ static void update_display_from_data(void)
         s_u1_buf[9] = SEG_FONT[ss / 10];  /* GRID9 = 秒十位 (swapped) */
     }
 
-    /* === U1 indicator LEDs: GRID10(竖灯1) GRID11(竖灯2) GRID12(右下角灯) === */
-    /* Drive from alarm_flags and relay_status in the 0x01 packet.
-     * Each GRID byte controls 8 LED segments — set 0xFF=all on, 0x00=all off.
-     * Mapping can be refined once physical LED layout is confirmed. */
+    /* === U1 indicator LEDs: GRID10/11/12 设备运行指示 === */
+    /* Relay bitmap bits (from bsp_config.h):
+     *   0=PTC, 1=JIARE(底热), 2=RED(空), 3=ZIY(UV), 4=O2,
+     *   5=JIASHI(加湿), 6=FENGJI(外风机), 7=YASUO(压缩机), 8=WH(雾化) */
     {
         uint16_t alarm_flags  = (uint16_t)((d[20] << 8) | d[21]);
         uint16_t relay_status = (uint16_t)((d[16] << 8) | d[17]);
-        (void)relay_status;  /* Available for future indicator mapping */
 
-        /* GRID10 竖灯1: alarm active (any alarm bit set and not zero) */
+        uint8_t fog_on  = (relay_status & (1U << 8)) ? 1 : 0;  /* WH 雾化 */
+        uint8_t uv_on   = (relay_status & (1U << 3)) ? 1 : 0;  /* ZIY 紫外 */
+        uint8_t o2_on   = (relay_status & (1U << 4)) ? 1 : 0;  /* O2 供氧 */
+        uint8_t cool_on = (relay_status & (1U << 7)) ? 1 : 0;  /* YASUO 压缩机 */
+        uint8_t heat_on = (relay_status & ((1U << 0) | (1U << 1))) ? 1 : 0; /* PTC+底热 */
+
+        /* GRID10: 报警指示 — 有报警时全亮 */
         s_u1_buf[10] = (alarm_flags != 0) ? 0xFF : 0x00;
-        /* GRID11 竖灯2: reserved — off for now */
-        s_u1_buf[11] = 0x00;
-        /* GRID12 右下角灯: reserved — off for now */
-        s_u1_buf[12] = 0x00;
+        /* GRID11: 治疗/执行器运行 — 雾化或紫外消毒工作中 */
+        s_u1_buf[11] = (fog_on || uv_on) ? 0xFF : 0x00;
+        /* GRID12: 温控/供氧运行 — O2供氧或压缩机制冷或加热中 */
+        s_u1_buf[12] = (o2_on || cool_on || heat_on) ? 0xFF : 0x00;
     }
 
     /* Edit-mode overlay: alternate current value and setpoint every 500ms. */
