@@ -56,14 +56,14 @@
 | PB2 | — | 未使用 | — | — |
 | PB3 | BUZZER | 蜂鸣器 | GPIO输出 | ✅ tasks.c AlarmTask |
 | PB4 | WH-IO | 雾化继电器 (12V) | GPIO输出 | ✅ relay_driver[8] |
-| PB5 | GY-IO | 供氧相关信号 | GPIO输出 | ❌ 未实现，待确认用途 |
-| PB6 | ZY-IO | 制氧机信号→Q32→CN15 | GPIO输出 | ❌ 未实现，待确认用途 |
+| PB5 | GY-IO | **制氧机工作时输出高电平** | GPIO输出 | 🟡 待实现 |
+| PB6 | ZY-IO | 制氧机信号→Q32→CN15 | GPIO输出 | ✅ 确认空着不用 |
 | PB7 | O2-IO | O2电磁阀继电器 (12V) | GPIO输出 | ✅ relay_driver[4] |
 | PB8 | ZIY-IO | 紫外消毒灯继电器 (220V) | GPIO输出 | ✅ relay_driver[3] |
-| PB9 | RED-IO | 红外灯继电器 (220V) | GPIO输出 | ❌ 已映射但无业务逻辑 |
+| PB9 | RED-IO | 红外灯继电器 (220V) | GPIO输出 | ✅ 确认空着不用 |
 | PB10 | UART3-TX | CO2传感器TX | AF输出 | ✅ co2_sensor.c |
 | PB11 | UART3-RX | CO2传感器RX | AF输入 | ✅ co2_sensor.c |
-| PB12 | LED01-IO | LED指示灯输出 | GPIO输出 | ❌ 未实现，可能是CN14空调指示灯 |
+| PB12 | LED01-IO | **压缩机指示灯（启动亮/关闭灭）** | GPIO输出 | 🟡 待实现 |
 | PB13 | KEY1-IO | 检测输入（网名KEY1,实际液位/尿液） | GPIO输入 | ⚠️ 待确认 |
 | PB14 | KEY3-IO | 液位检测 | GPIO输入上拉 | ✅ SensorTask |
 | PB15 | KEY2-IO | 尿液检测 | GPIO输入上拉 | ✅ SensorTask |
@@ -94,12 +94,12 @@
 | PE4 | JIASHI-IO | 加湿器继电器 (220V) | GPIO输出 | ✅ relay_driver[5] |
 | PE5 | FENGJI-NEI-IO | 空调内风机1 | GPIO输出 | ✅ pwm_driver.c |
 | PE6 | FENGJI-PTC-IO | PTC风机使能 | GPIO输出 | ✅ pwm_driver.c |
-| PE7 | MAGNET-IO | 推拉电磁铁(门锁) | GPIO输出 | ❌ 未实现 |
+| PE7 | MAGNET-IO | 推拉电磁铁=**内/外循环切换** | GPIO输出 | 🟡 待实现 |
 | PE9 | PWM1 | PTC风机PWM速度 | TIM PWM | ✅ pwm_driver.c |
-| **PE10** | **LED1** | **照明灯 高低电平1 → U32** | GPIO输出 | **❌ 未实现** |
-| **PE11** | **LED2** | **照明灯 高低电平2 → U32** | GPIO输出 | **❌ 未实现** |
-| **PE12** | **LED3** | **照明灯 高低电平3 → U32** | GPIO输出 | **❌ 未实现** |
-| **PE13** | **LED4** | **照明灯 高低电平4 → U32** | GPIO输出 | **❌ 未实现** |
+| **PE10** | **LED1** | **照明灯颜色1 → U32 高电平亮** | GPIO输出 | 🟡 待实现 |
+| **PE11** | **LED2** | **照明灯颜色2 → U32 高电平亮** | GPIO输出 | 🟡 待实现 |
+| **PE12** | **LED3** | **照明灯颜色3 → U32 高电平亮** | GPIO输出 | 🟡 待实现 |
+| **PE13** | **LED4** | **照明灯颜色4 → U32 高电平亮** | GPIO输出 | 🟡 待实现 |
 | PE14-15 | — | 未使用 | — | — |
 
 ### B. 继电器输出 (9路, relay_driver.c)
@@ -279,13 +279,13 @@
 | 按键 | CN座 | key_id | 主板修改 | 物理输出GPIO | 输出连接器 | 状态 |
 |------|------|--------|---------|-----------|----------|------|
 | KEY1 护理等级 | CN1 | 0x01 | nursing_level循环1→2→3 | PB1/PB0/PC5 | U29(颜色1/2/3) | ✅ |
-| KEY2 照明灯 | CN3 | 0x02 | light_ctrl bit1翻转 | **应→PE11(LED2)** | **U32(高低电平2)** | **🔴 缺GPIO驱动** |
-| KEY3 检查灯 | CN5 | 0x03 | light_ctrl bit0翻转 | **应→PE10(LED1)** | **U32(高低电平1)** | **🔴 缺GPIO驱动** |
-| KEY4 红蓝光 | CN7 | 0x04 | light_ctrl bit2+3翻转 | **应→PE12+PE13** | **U32(高低电平3+4)** | **🔴 缺GPIO驱动** |
+| KEY2 照明灯 | CN3 | 0x02 | light_ctrl bit1翻转 | PE11(LED2) → U32 | U32(高低电平2) | 🟡 待实现GPIO驱动 |
+| KEY3 检查灯 | CN5 | 0x03 | light_ctrl bit0翻转 | PE10(LED1) → U32 | U32(高低电平1) | 🟡 待实现GPIO驱动 |
+| KEY4 红蓝光 | CN7 | 0x04 | light_ctrl bit2+3翻转 | PE12+PE13(LED3+4) → U32 | U32(高低电平3+4) | 🟡 待实现GPIO驱动 |
 | KEY5 紫外灯 | CN2 | 0x05 | 启停消毒定时器 | PB8(ZIY-IO) | 紫外灯(U14) | ✅ |
 | KEY6 开放式供氧 | CN4 | 0x06 | open_o2翻转+互锁 | PB7(O2-IO) | O2阀门(U16) | ✅ |
-| KEY7 内/外循环 | CN6 | 0x07 | inner_cycle翻转 | **❓ 待确认GPIO** | **❓** | **🔴 缺GPIO** |
-| KEY8 新风净化 | CN8 | 0x08 | fresh_air翻转 | **❓ 待确认GPIO** | **❓** | **🔴 缺GPIO** |
+| KEY7 内/外循环 | CN6 | 0x07 | inner_cycle翻转 | PE7(MAGNET-IO) 推拉电磁铁 | 电磁铁连接器 | 🟡 待实现GPIO驱动 |
+| KEY8 新风净化 | CN8 | 0x08 | fresh_air翻转 | PE9(PWM)+PE6 PTC风机调速 | PTC风机 | 🟡 待实现联动逻辑 |
 | KEY9 报警确认 | CN9 | 0x09 | acknowledged=true + 0x85帧 | PB3(蜂鸣器停) | 蜂鸣器 | ✅ |
 | 编码器单击 | — | 0x0A | HMI通知 | 无 | — | ✅ |
 | 编码器长按 | — | 0x0A+long | o2_accumulated=0 | 无 | — | ✅ |
@@ -445,9 +445,9 @@ while (uart1_rx_available()) parse_rx_byte(uart1_rx_read());  // 备用
 | 5 | 雾化治疗 | — | control_timers 倒计时 | PB4 雾化继电器 | ✅ 100% |
 | 6 | 消毒杀菌 | — | control_timers + KEY5启停 | PB8 UV继电器 | ✅ 100% |
 | 7 | 供氧计时 | — | control_timers 累计 | 纯软件计数 | ✅ 100% |
-| **8** | **照明4灯** | — | light_ctrl bit0-3 有状态 | **PE10-PE13 → U32** | **🔴 缺GPIO驱动** |
-| **9** | **内/外循环** | — | inner_cycle + 互锁逻辑 | **GPIO未确认** | **🔴 缺GPIO** |
-| **10** | **新风净化** | — | fresh_air + 互锁逻辑 | **GPIO未确认** | **🔴 缺GPIO** |
+| **8** | **照明4灯** | — | light_ctrl bit0-3 有状态 | **PE10-PE13 → U32 (已确认)** | **🟡 待实现GPIO驱动** |
+| **9** | **内/外循环** | — | inner_cycle + 互锁逻辑 | **PE7 MAGNET-IO (已确认=推拉电磁铁)** | **🟡 待实现GPIO驱动** |
+| **10** | **新风净化** | — | fresh_air + 互锁逻辑 | **PE9 PWM + PE6 (已确认=PTC风机调速)** | **🟡 待实现联动逻辑** |
 | 11 | 护理等级 | — | nursing_level 1→2→3 | PB0/PB1/PC5 LED | ✅ 100% |
 | 12 | 开放式供氧 | — | open_o2 + 6条互锁 | PB7 + 联动制冷/风机 | ✅ 100% |
 | 13 | 风速 | — | fan_speed → PWM | PE9(PWM) + PE5/PC13 | ✅ 100% |
@@ -458,30 +458,30 @@ while (uart1_rx_available()) parse_rx_byte(uart1_rx_read());  // 备用
 
 ---
 
-## 十、待确认/待实现清单
+## 十、硬件工程师确认结果 (2026-04-16)
 
-### 🔴 优先级高 (阻塞功能闭环)
+### ✅ 已确认并待实现
 
-| # | 项目 | 已知信息 | 需确认 | 工作量 |
-|---|------|---------|--------|--------|
-| 1 | **U32照明灯GPIO驱动** | PE10=LED1, PE11=LED2, PE12=LED3, PE13=LED4 | light_ctrl bit0-3和LED1-4的对应关系是否正确(bit0→LED1?) | BSP定义4行 + ControlTask加4行WritePin |
-| 2 | **KEY7/KEY8内外循环+新风GPIO** | inner_cycle/fresh_air软件逻辑+互锁已完成 | 控制哪个GPIO/继电器/电磁阀? PCB/原理图上未找到FAI信号 | BSP定义 + relay映射 |
+| # | 项目 | 硬件工程师回复 | GPIO | 实现方案 | 工作量 |
+|---|------|-------------|------|---------|--------|
+| 1 | **U32照明灯4灯驱动** | 4个颜色灯，高电平亮低电平灭 | PE10=LED1, PE11=LED2, PE12=LED3, PE13=LED4 | ControlTask根据light_ctrl bit0-3驱动WritePin | BSP定义4行+ControlTask 4行 |
+| 2 | **内/外循环=推拉电磁铁** | 内外循环切换控制推拉电磁铁 | **PE7 = MAGNET-IO** | ControlTask根据inner_cycle驱动PE7 | BSP定义+1行WritePin |
+| 3 | **新风净化=PTC风机调速** | 新风系统可调速，用PTC风机 | PE9(PWM)+PE6(使能) 已有 | fresh_air=1时提高风机转速 | 修改pwm逻辑 |
+| 4 | **PB12压缩机指示灯** | 压缩机启动亮，关闭灭 | **PB12 = LED01-IO** | ControlTask根据YASUO-IO状态驱动PB12 | BSP定义+1行WritePin |
+| 5 | **PB5制氧机输出信号** | 制氧机工作时GY-IO输出高电平 | **PB5 = GY-IO** | 供氧状态SUPPLYING/OPEN时PB5高 | BSP定义+1行WritePin |
+| 6 | **屏幕板设备运行指示LED** | 设备运行时绿灯亮（压缩机/雾化等工作中亮） | 屏幕板LEDA信号 | 屏幕板根据0x01包relay_status驱动 | 屏幕板代码修改 |
 
-### ⚠️ 优先级中 (功能可用但不完整)
+### ✅ 已确认不需实现
 
-| # | 项目 | 已知信息 | 需确认 |
-|---|------|---------|--------|
-| 3 | PB9 RED-IO业务定义 | 220V红外灯继电器已映射测试通过 | 什么场景触发? 加热辅助/理疗/独立按键? |
-| 4 | PE7 MAGNET-IO门锁驱动 | GPIO已确认=PE7 | 什么条件触发? 手动/自动? |
-| 5 | PB6 ZY-IO制氧机信号 | →Q32(2N7002)→CN15 | 供氧控制时需要同步驱动? |
-| 6 | PB5 GY-IO供氧信号 | GPIO已确认 | 具体功能? |
-| 7 | 屏幕板LEDA5-8指示LED | 面板按钮旁绿色LED,需屏幕板GPIO拉低点亮 | LEDA5-8对应哪些MCU引脚? |
+| # | 项目 | 硬件工程师回复 |
+|---|------|-------------|
+| 7 | PB9 RED-IO红外灯 | **红外灯没用着，空着就行** |
+| 8 | PB6 ZY-IO制氧机信号 | **先空着** |
 
-### 📋 优先级低 (后续迭代)
+### 📋 后续迭代
 
 | # | 项目 | 说明 |
 |---|------|------|
-| 8 | PB12 LED01-IO | 可能是CN14空调指示灯,待确认 |
 | 9 | CN11 UART1电平转换修复 | 修复后可回退到设计方案通信链路 |
 | 10 | 屏幕板HMI状态机 | 编码器参数编辑界面(旋转调值+按下确认) |
-| 11 | CN6/CN8供氧机信号 | 总供氧机控制/状态,代码未涉及 |
+| 11 | 屏幕板指示LED GPIO确认 | LEDA5-8对应屏幕板MCU哪些引脚，需查屏幕板原理图 |

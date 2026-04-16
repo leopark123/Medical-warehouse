@@ -115,7 +115,7 @@
 /* ULN2003A (U5): 5 channels */
 #define BSP_RELAY_PTC_IO            0   /* PTC加热器, 220V */
 #define BSP_RELAY_JIARE_IO          1   /* 底部加热, 220V */
-#define BSP_RELAY_RED_IO            2   /* 红外灯, 220V */
+#define BSP_RELAY_RED_IO            2   /* 红外灯, 220V (硬件确认:空着不用) */
 #define BSP_RELAY_ZIY_IO            3   /* 紫外灯, 220V */
 #define BSP_RELAY_O2_IO             4   /* O2阀门, 12V */
 
@@ -127,10 +127,40 @@
 /* ULN2001 (U33): 1 channel */
 #define BSP_RELAY_WH_IO             8   /* 雾化器, 12V */
 
-/* CN32 FAI solenoid valve (inner/outer cycle + fresh air) — GPIO TBD.
- * Hardware engineer must confirm which MCU pin drives CN32.
- * Until confirmed, inner_cycle/fresh_air only change software status bits. */
-/* #define BSP_RELAY_FAI_IO       9 */   /* Placeholder — DO NOT enable */
+/* 硬件工程师确认(2026-04-16):
+ * - 内/外循环 = 推拉电磁铁 PE7(MAGNET-IO)，不是CN32 FAI
+ * - 新风净化 = PTC风机调速 PE9(PWM)+PE6(使能)，已有pwm_driver */
+
+/* ========================================================================= */
+/*  照明灯 U32连接器 (硬件确认 2026-04-16)                                    */
+/*  4色灯, 高电平亮低电平灭. L-LMP照明板原理图: SCH_Schematic3.pdf            */
+/* ========================================================================= */
+#define BSP_LIGHT_LED1_PORT         GPIOE       /* PE10 = LED1 照明颜色1 */
+#define BSP_LIGHT_LED1_PIN          GPIO_PIN_10
+#define BSP_LIGHT_LED2_PORT         GPIOE       /* PE11 = LED2 照明颜色2 */
+#define BSP_LIGHT_LED2_PIN          GPIO_PIN_11
+#define BSP_LIGHT_LED3_PORT         GPIOE       /* PE12 = LED3 照明颜色3 */
+#define BSP_LIGHT_LED3_PIN          GPIO_PIN_12
+#define BSP_LIGHT_LED4_PORT         GPIOE       /* PE13 = LED4 照明颜色4 */
+#define BSP_LIGHT_LED4_PIN          GPIO_PIN_13
+
+/* ========================================================================= */
+/*  内/外循环电磁铁 (硬件确认 2026-04-16)                                     */
+/* ========================================================================= */
+#define BSP_MAGNET_PORT             GPIOE       /* PE7 = MAGNET-IO 推拉电磁铁 */
+#define BSP_MAGNET_PIN              GPIO_PIN_7
+
+/* ========================================================================= */
+/*  供氧机输出信号 (硬件确认 2026-04-16)                                      */
+/* ========================================================================= */
+#define BSP_GY_PORT                 GPIOB       /* PB5 = GY-IO 制氧机工作时高电平 */
+#define BSP_GY_PIN                  GPIO_PIN_5
+
+/* ========================================================================= */
+/*  压缩机指示灯 (硬件确认 2026-04-16)                                       */
+/* ========================================================================= */
+#define BSP_COMPRESSOR_LED_PORT     GPIOB       /* PB12 = LED01-IO 压缩机启动亮 */
+#define BSP_COMPRESSOR_LED_PIN      GPIO_PIN_12
 
 #define BSP_RELAY_COUNT             9
 
