@@ -705,14 +705,15 @@ static void update_display_from_data(void)
 
         uint8_t fog_on  = (relay_status & (1U << 8)) ? 1 : 0;  /* WH 雾化 */
         uint8_t uv_on   = (relay_status & (1U << 3)) ? 1 : 0;  /* ZIY 紫外 */
+        uint8_t humid_on = (relay_status & (1U << 5)) ? 1 : 0; /* JIASHI 加湿 */
         uint8_t o2_on   = (relay_status & (1U << 4)) ? 1 : 0;  /* O2 供氧 */
         uint8_t cool_on = (relay_status & (1U << 7)) ? 1 : 0;  /* YASUO 压缩机 */
         uint8_t heat_on = (relay_status & ((1U << 0) | (1U << 1))) ? 1 : 0; /* PTC+底热 */
 
         /* GRID10: 报警指示 — 有报警时全亮 */
         s_u1_buf[10] = (alarm_flags != 0) ? 0xFF : 0x00;
-        /* GRID11: 治疗/执行器运行 — 雾化或紫外消毒工作中 */
-        s_u1_buf[11] = (fog_on || uv_on) ? 0xFF : 0x00;
+        /* GRID11: 治疗/执行器运行 — 雾化、紫外消毒、加湿工作中 */
+        s_u1_buf[11] = (fog_on || uv_on || humid_on) ? 0xFF : 0x00;
         /* GRID12: 温控/供氧运行 — O2供氧或压缩机制冷或加热中 */
         s_u1_buf[12] = (o2_on || cool_on || heat_on) ? 0xFF : 0x00;
     }

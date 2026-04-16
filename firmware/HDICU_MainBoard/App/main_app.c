@@ -118,10 +118,10 @@ void app_init(void)
                           BSP_MAGNET_PIN,
                           GPIO_PIN_RESET);
 
-        /* PB5: GY-IO制氧机信号 + PB12: 压缩机指示灯 */
-        gpio.Pin = BSP_GY_PIN | BSP_COMPRESSOR_LED_PIN;
+        /* PB5: GY-IO制氧机信号 + PB6: ZY-IO(空置,输出低防漂浮) + PB12: 压缩机指示灯 */
+        gpio.Pin = BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN;
         HAL_GPIO_Init(GPIOB, &gpio);
-        HAL_GPIO_WritePin(GPIOB, BSP_GY_PIN | BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOB, BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
     }
 
     /* 3. Initialize central data hub with power-on defaults */
