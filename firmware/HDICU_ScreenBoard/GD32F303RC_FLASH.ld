@@ -39,12 +39,17 @@ SECTIONS
 
     .bss : {
         . = ALIGN(4);
+        __bss_start__ = .;
         _sbss = .;
         *(.bss*)
         *(COMMON)
         . = ALIGN(4);
         _ebss = .;
+        __bss_end__ = .;
     } > RAM
+
+    end = .;
+    __end__ = .;
 
     /DISCARD/ : {
         *(.ARM.attributes)

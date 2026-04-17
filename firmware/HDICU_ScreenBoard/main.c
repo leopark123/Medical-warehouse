@@ -10,7 +10,10 @@
  *     CN1=KEY1(PB12) CN3=KEY2(PB13) CN5=KEY3(PB14) CN7=KEY4(PB15)
  *     CN2=KEY5(PC6)  CN4=KEY6(PC7)  CN6=KEY7(PC8)  CN8=KEY8(PC9)
  *     CN9=KEY9(PA8)
- *   Encoder: Rotary encoder (A=PB2, B=PA6, Push=PA7)
+ *   Encoder: Push button only (PA7), rotation disabled (PB2→LEDA4)
+ *   Indicator LEDs (active-low, GPIO LOW=ON):
+ *     LEDA1=PA5  LEDA2=PC4  LEDA3=PC5  LEDA4=PB2
+ *     LEDA5=PC13 LEDA6=PA0  LEDA7=PC15 LEDA8=PA15
  *   Comm: UART2(PA2/PA3) via CN12 (3.3V direct) — primary TX/RX to main board
  *         UART1(PA9/PA10) via CN11 — reserved (level shifter issue)
  *
@@ -187,9 +190,7 @@ static uint8_t  s_key_debounce[TOTAL_KEYS];    /* consecutive same-reading count
 static uint32_t s_key_press_tick[TOTAL_KEYS];  /* tick when press detected */
 static uint8_t  s_key_long_sent[TOTAL_KEYS];   /* long-press event already sent */
 
-/* Encoder rotation state */
-static uint8_t  s_enc_last_ab;  /* previous A|B state (2 bits) */
-static int8_t   s_enc_delta;    /* accumulated rotation: +CW, -CCW */
+/* Encoder rotation removed — PB2 repurposed as LEDA4 */
 
 /* Protocol frame parser state */
 #define FRAME_MAX_DATA      64
@@ -803,32 +804,99 @@ static void parse_rx_byte(uint8_t byte)
 }
 
 /* ========================================================================= */
-/*  Debug LED — blink PC13 and PB2 to confirm firmware is running            */
-/*  If your board has an LED on PC13 (common) or PB2, it will blink.         */
-/*  Even without LED, GPIO toggle is measurable with multimeter.             */
+/*  LEDA Indicator LEDs — 8 green LEDs next to panel buttons                 */
+/*  Circuit: 3V3 → R(680Ω) → LED → GPIO pin  (active-low: LOW=ON)          */
+/*  LEDA1=PA5(KEY1) LEDA2=PC4(KEY2) LEDA3=PC5(KEY3) LEDA4=PB2(KEY4)        */
+/*  LEDA5=PC13(KEY5) LEDA6=PA0(KEY6) LEDA7=PC15(KEY7) LEDA8=PA15(KEY8)     */
 /* ========================================================================= */
 
-static void Debug_LED_Init(void)
+static void LEDA_Init(void)
 {
-    /* Enable GPIOB and GPIOC clocks */
-    RCC_APB2ENR |= (1 << 3) | (1 << 4);  /* GPIOB(bit3), GPIOC(bit4) */
+    /* Enable GPIO clocks: A(bit2), B(bit3), C(bit4) */
+    RCC_APB2ENR |= (1 << 2) | (1 << 3) | (1 << 4);
 
-    /* PC13 = push-pull output, 2MHz: CRH bits[23:20] = 0x2 (MODE=10,CNF=00) */
-    /* Note: PB2 was previously debug LED but now used for encoder A-phase */
-    uint32_t crh = GPIOC_CRH;
-    crh &= ~(0xFU << 20);
+    /* All LEDA pins: push-pull output, 2MHz (nibble = 0x2) */
+
+    /* --- GPIOA: PA0[3:0], PA5[23:20], PA15 via CRH[31:28] --- */
+    uint32_t crl = GPIOA_CRL;
+    crl &= ~(0xFU << 0);    /* PA0 */
+    crl |=  (0x2U << 0);
+    crl &= ~(0xFU << 20);   /* PA5 */
+    crl |=  (0x2U << 20);
+    GPIOA_CRL = crl;
+    uint32_t crh = GPIOA_CRH;
+    crh &= ~(0xFU << 28);   /* PA15 */
+    crh |=  (0x2U << 28);
+    GPIOA_CRH = crh;
+    /* Default HIGH = LEDs off */
+    GPIOA_BSRR = (1 << 0) | (1 << 5) | (1 << 15);
+
+    /* --- GPIOB: PB2[11:8] --- */
+    crl = GPIOB_CRL;
+    crl &= ~(0xFU << 8);    /* PB2 */
+    crl |=  (0x2U << 8);
+    GPIOB_CRL = crl;
+    GPIOB_BSRR = (1 << 2);  /* HIGH = off */
+
+    /* --- GPIOC: PC4[19:16], PC5[23:20], PC13 via CRH[23:20], PC15 via CRH[31:28] --- */
+    crl = GPIOC_CRL;
+    crl &= ~(0xFU << 16);   /* PC4 */
+    crl |=  (0x2U << 16);
+    crl &= ~(0xFU << 20);   /* PC5 */
+    crl |=  (0x2U << 20);
+    GPIOC_CRL = crl;
+    crh = GPIOC_CRH;
+    crh &= ~(0xFU << 20);   /* PC13 */
     crh |=  (0x2U << 20);
+    crh &= ~(0xFU << 28);   /* PC15 */
+    crh |=  (0x2U << 28);
     GPIOC_CRH = crh;
-
-    GPIOC_BSRR = (1 << 13);  /* Start HIGH (LED off) */
+    GPIOC_BSRR = (1 << 4) | (1 << 5) | (1 << 13) | (1 << 15);  /* HIGH = off */
 }
 
-static void Debug_LED_Toggle(void)
+/* Drive LEDA1-8 from main board 0x01 packet data.
+ * Active-low: BSRR set bit = HIGH = off, reset bit = LOW = on. */
+static void LEDA_Update(void)
 {
-    if (GPIOC_ODR & (1 << 13))
-        GPIOC_BSRR = (1 << (13 + 16));  /* Reset = LOW */
-    else
-        GPIOC_BSRR = (1 << 13);         /* Set = HIGH */
+    if (!s_display_valid) return;
+    const uint8_t *d = s_display_data;
+
+    uint8_t  nursing   = d[9];                                    /* nursing_level */
+    uint16_t relay_st  = (uint16_t)((d[16] << 8) | d[17]);       /* relay_status */
+    uint8_t  light_st  = d[18];                                   /* light_status */
+    uint8_t  switch_st = d[19];                                   /* switch_status */
+
+    /* LEDA1 PA5:  KEY1 护理等级 — 任何等级激活时亮 */
+    if (nursing > 0)  GPIOA_BSRR = (1 << (5 + 16));   /* LOW=on */
+    else              GPIOA_BSRR = (1 << 5);           /* HIGH=off */
+
+    /* LEDA2 PC4:  KEY2 照明灯 — light_status bit1 */
+    if (light_st & (1 << 1)) GPIOC_BSRR = (1 << (4 + 16));
+    else                     GPIOC_BSRR = (1 << 4);
+
+    /* LEDA3 PC5:  KEY3 检查灯 — light_status bit0 */
+    if (light_st & (1 << 0)) GPIOC_BSRR = (1 << (5 + 16));
+    else                     GPIOC_BSRR = (1 << 5);
+
+    /* LEDA4 PB2:  KEY4 红蓝光 — light_status bit2 or bit3 */
+    if (light_st & ((1 << 2) | (1 << 3))) GPIOB_BSRR = (1 << (2 + 16));
+    else                                   GPIOB_BSRR = (1 << 2);
+
+    /* LEDA5 PC13: KEY5 紫外灯 — relay ZIY bit3 */
+    if (relay_st & (1 << 3)) GPIOC_BSRR = (1 << (13 + 16));
+    else                     GPIOC_BSRR = (1 << 13);
+
+    /* LEDA6 PA0:  KEY6 开放供氧 — relay O2 bit4 */
+    if (relay_st & (1 << 4)) GPIOA_BSRR = (1 << (0 + 16));
+    else                     GPIOA_BSRR = (1 << 0);
+
+    /* LEDA7 PC15: KEY7 内循环 — switch_status bit0 */
+    if (switch_st & (1 << 0)) GPIOC_BSRR = (1 << (15 + 16));
+    else                      GPIOC_BSRR = (1 << 15);
+
+    /* LEDA8 PA15: KEY8 新风净化 — switch_status bit1 */
+    if (switch_st & (1 << 1)) GPIOA_BSRR = (1 << (15 + 16));
+    else                      GPIOA_BSRR = (1 << 15);
 }
 
 /* ========================================================================= */
@@ -998,7 +1066,7 @@ static void TM1640_Update(void)
 /*  Pins:                                                                    */
 /*    KEY1=PB12  KEY2=PB13  KEY3=PB14  KEY4=PB15                            */
 /*    KEY5=PC6   KEY6=PC7   KEY7=PC8   KEY8=PC9                             */
-/*    KEY9=PA8   Encoder: A=PB2  B=PA6  Push=PA7                            */
+/*    KEY9=PA8   Encoder push=PA7 (rotation disabled, PB2→LEDA4)            */
 /*  Protocol key IDs (0x82 packet):                                          */
 /*    0x01-0x09 = KEY1-KEY9,  0x0A = encoder push                           */
 /*  Action: 0x01=click  0x02=long press                                      */
@@ -1017,11 +1085,11 @@ static void Key_Init(void)
     /* All key/encoder pins: input with pull-up (CNF=10, MODE=00 → nibble 0x8)
      * Then set ODR bit = 1 to select pull-up (vs pull-down) */
 
-    /* --- GPIOA: PA6(enc B), PA7(enc push), PA8(KEY9) --- */
-    /* PA6: CRL[27:24], PA7: CRL[31:28] */
+    /* --- GPIOA: PA7(enc push), PA8(KEY9) --- */
+    /* PA7: CRL[31:28] — PA6 no longer used (encoder B removed) */
     uint32_t crl = GPIOA_CRL;
-    crl &= ~(0xFFU << 24);         /* Clear PA6, PA7 */
-    crl |=  (0x88U << 24);         /* Input pull-up/down */
+    crl &= ~(0xFU << 28);          /* Clear PA7 only */
+    crl |=  (0x8U << 28);          /* Input pull-up/down */
     GPIOA_CRL = crl;
     /* PA8: CRH[3:0] */
     uint32_t crh = GPIOA_CRH;
@@ -1029,21 +1097,17 @@ static void Key_Init(void)
     crh |=  0x8U;                  /* Input pull-up/down */
     GPIOA_CRH = crh;
     /* Enable pull-ups: set ODR bits */
-    GPIOA_ODR |= (1 << 6) | (1 << 7) | (1 << 8);
+    GPIOA_ODR |= (1 << 7) | (1 << 8);
 
-    /* --- GPIOB: PB2(enc A), PB12-PB15(KEY1-KEY4) --- */
-    /* PB2: CRL[11:8] — was debug LED, now encoder input */
-    crl = GPIOB_CRL;
-    crl &= ~(0xFU << 8);           /* Clear PB2 */
-    crl |=  (0x8U << 8);           /* Input pull-up/down */
-    GPIOB_CRL = crl;
+    /* --- GPIOB: PB12-PB15(KEY1-KEY4) --- */
+    /* PB2 removed — now LEDA4 output, configured by LEDA_Init() */
     /* PB12: CRH[19:16], PB13: [23:20], PB14: [27:24], PB15: [31:28] */
     crh = GPIOB_CRH;
     crh &= ~0xFFFF0000U;           /* Clear PB12-PB15 */
     crh |=  0x88880000U;           /* All input pull-up/down */
     GPIOB_CRH = crh;
     /* Enable pull-ups */
-    GPIOB_ODR |= (1 << 2) | (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15);
+    GPIOB_ODR |= (1 << 12) | (1 << 13) | (1 << 14) | (1 << 15);
 
     /* --- GPIOC: PC6-PC9 (KEY5-KEY8) --- */
     /* PC6: CRL[27:24], PC7: CRL[31:28] */
@@ -1053,15 +1117,12 @@ static void Key_Init(void)
     GPIOC_CRL = crl;
     /* PC8: CRH[3:0], PC9: CRH[7:4] */
     crh = GPIOC_CRH;
-    crh &= ~0xFFU;                 /* Clear PC8, PC9 (preserve PC13 debug LED) */
+    crh &= ~0xFFU;                 /* Clear PC8, PC9 (PC13 now LEDA5, configured by LEDA_Init) */
     crh |=  0x88U;
     GPIOC_CRH = crh;
     GPIOC_ODR |= (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9);
 
-    /* Init encoder: read current A/B state */
-    uint8_t a = (GPIOB_IDR & (1 << 2))  ? 1 : 0;
-    uint8_t b = (GPIOA_IDR & (1 << 6))  ? 1 : 0;
-    s_enc_last_ab = (a << 1) | b;
+    /* Encoder rotation disabled (PB2→LEDA4). Push button (PA7) still active as key. */
 }
 
 /* Read raw pin for key index 0-9, returns 1=pressed */
@@ -1165,35 +1226,11 @@ static void Key_Scan(void)
         }
     }
 
-    /* --- Encoder rotation (quadrature A=PB2, B=PA6) --- */
-    {
-        uint8_t a = (GPIOB_IDR & (1 << 2))  ? 1 : 0;
-        uint8_t b = (GPIOA_IDR & (1 << 6))  ? 1 : 0;
-        uint8_t cur = (a << 1) | b;
-        if (cur != s_enc_last_ab) {
-            /* Gray code state table for CW rotation: 00→01→11→10→00
-             * Detect direction from (last, cur) transition */
-            static const int8_t enc_table[16] = {
-                 0, +1, -1,  0,
-                -1,  0,  0, +1,
-                +1,  0,  0, -1,
-                 0, -1, +1,  0
-            };
-            s_enc_delta += enc_table[(s_enc_last_ab << 2) | cur];
-            s_enc_last_ab = cur;
-        }
-    }
+    /* Encoder rotation removed (PB2 repurposed as LEDA4 indicator LED) */
 }
 
-/* Read and clear accumulated encoder rotation.
- * Returns: +N = N detents CW, -N = N detents CCW, 0 = no movement.
- * Call from HMI state machine (future) to adjust parameter values. */
-static int8_t encoder_read_delta(void)
-{
-    int8_t d = s_enc_delta;
-    s_enc_delta = 0;
-    return d;
-}
+/* Encoder rotation removed — PB2 repurposed as LEDA4 indicator LED.
+ * HMI parameter adjustment via encoder is no longer available. */
 
 /* ========================================================================= */
 /*  Main                                                                     */
@@ -1203,7 +1240,7 @@ int main(void)
 {
     SystemClock_Config();
     SysTick_Init();
-    Debug_LED_Init();
+    LEDA_Init();
     UART1_Init();
     UART2_Init();
     TM1640_Init();
@@ -1212,9 +1249,7 @@ int main(void)
 
     uint32_t last_heartbeat = 0;
     uint32_t last_display = 0;
-    uint32_t last_blink = 0;
     uint32_t last_key_scan = 0;
-    /* alarm_ack_counter removed — 0x85 now sent only on KEY9 press */
 
     /* Startup lamp test: all segments ON for 1s, then OFF. */
     TM1640_AllOn();
@@ -1238,23 +1273,10 @@ int main(void)
         /* Feed watchdog every loop iteration */
         IWDG_Feed();
 
-        /* Blink debug LED every 500ms — visible proof firmware is running */
-        if (tick_ms() - last_blink >= 500) {
-            last_blink = tick_ms();
-            Debug_LED_Toggle();
-        }
-
-        /* Key scan every 20ms (debounce + encoder) */
+        /* Key scan every 20ms */
         if (tick_ms() - last_key_scan >= 20) {
             last_key_scan = tick_ms();
             Key_Scan();
-        }
-
-        {
-            int8_t enc = encoder_read_delta();
-            if (enc != 0) {
-                hmi_apply_encoder_delta(enc);
-            }
         }
 
         if (s_hmi_page != HMI_PAGE_LIVE && (tick_ms() - s_hmi_last_input_tick >= HMI_EDIT_TIMEOUT_MS)) {
@@ -1272,6 +1294,7 @@ int main(void)
             last_display = tick_ms();
             if (s_display_valid) {
                 update_display_from_data();
+                LEDA_Update();
             }
         }
     }
