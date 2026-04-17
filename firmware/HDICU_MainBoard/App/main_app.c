@@ -122,6 +122,15 @@ void app_init(void)
         gpio.Pin = BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN;
         HAL_GPIO_Init(GPIOB, &gpio);
         HAL_GPIO_WritePin(GPIOB, BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
+
+        /* 2d. Encoder inputs (CN17): PB2=A, PA6=B, PA7=Push — all input pull-up */
+        __HAL_RCC_GPIOA_CLK_ENABLE();
+        gpio.Mode = GPIO_MODE_INPUT;
+        gpio.Pull = GPIO_PULLUP;
+        gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;  /* PA6(enc B) + PA7(enc push) */
+        HAL_GPIO_Init(GPIOA, &gpio);
+        gpio.Pin = GPIO_PIN_2;                /* PB2(enc A) */
+        HAL_GPIO_Init(GPIOB, &gpio);
     }
 
     /* 3. Initialize central data hub with power-on defaults */

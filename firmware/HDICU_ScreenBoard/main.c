@@ -10,9 +10,10 @@
  *     CN1=KEY1(PB12) CN3=KEY2(PB13) CN5=KEY3(PB14) CN7=KEY4(PB15)
  *     CN2=KEY5(PC6)  CN4=KEY6(PC7)  CN6=KEY7(PC8)  CN8=KEY8(PC9)
  *     CN9=KEY9(PA8)
- *   Encoder: Push button only (PA7), rotation disabled (PB2→LEDA4)
+ *   Encoder: Physical encoder on MAIN BOARD (CN17), not screen board.
+ *            Screen board receives encoder events via UART protocol (0x86).
  *   Indicator LEDs (active-low, GPIO LOW=ON):
- *     LEDA1=PA5  LEDA2=PC4  LEDA3=PC5  LEDA4=PB2
+ *     LEDA1=PA5  LEDA2=PC4  LEDA3=PC5  LEDA4=PB10
  *     LEDA5=PC13 LEDA6=PA0  LEDA7=PC15 LEDA8=PA15
  *   Comm: UART2(PA2/PA3) via CN12 (3.3V direct) — primary TX/RX to main board
  *         UART1(PA9/PA10) via CN11 — reserved (level shifter issue)
@@ -183,14 +184,14 @@ static uint8_t s_u9_buf[16];  /* U9: upper row */
 static uint8_t s_u1_buf[16];  /* U1: lower row */
 
 /* Key scan state */
-#define TOTAL_KEYS          10  /* 9 buttons + encoder push */
+#define TOTAL_KEYS          9   /* 9 buttons only (encoder is on main board) */
 #define KEY_LONG_PRESS_MS   2000
 static uint8_t  s_key_state[TOTAL_KEYS];       /* debounced: 0=released 1=pressed */
 static uint8_t  s_key_debounce[TOTAL_KEYS];    /* consecutive same-reading count */
 static uint32_t s_key_press_tick[TOTAL_KEYS];  /* tick when press detected */
 static uint8_t  s_key_long_sent[TOTAL_KEYS];   /* long-press event already sent */
 
-/* Encoder rotation removed — PB2 repurposed as LEDA4 */
+/* Encoder is on MAIN BOARD — screen board receives events via 0x86 command */
 
 /* Protocol frame parser state */
 #define FRAME_MAX_DATA      64
@@ -308,7 +309,7 @@ void USART1_IRQHandler(void)
     }
 }
 
-static void uart1_send(const uint8_t *data, uint16_t len)
+static void __attribute__((unused)) uart1_send(const uint8_t *data, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++) {
         uint32_t t0 = tick_ms();
@@ -559,6 +560,8 @@ static void hmi_apply_encoder_delta(int8_t delta)
     hmi_touch();
 }
 
+static void send_key_action(uint8_t key_id, uint8_t action_type);  /* forward decl */
+
 static void process_rx_frame(uint8_t cmd, const uint8_t *data, uint8_t len)
 {
     switch (cmd) {
@@ -571,6 +574,27 @@ static void process_rx_frame(uint8_t cmd, const uint8_t *data, uint8_t len)
         break;
 
     case 0x04:  /* Heartbeat from main board (8 bytes) */
+        break;
+
+    case 0x06:  /* Encoder event from main board
+                 * data[0] = event type: 0x01=push click, 0x02=push long, 0x03=rotation
+                 * data[1] = rotation delta (int8, signed: +CW, -CCW) — only for type 0x03 */
+        if (len >= 1) {
+            uint8_t evt = data[0];
+            if (evt == 0x01) {
+                /* Push click → cycle HMI page */
+                hmi_cycle_page();
+            } else if (evt == 0x02) {
+                /* Push long → clear O2 accumulated time (send to main board) */
+                send_key_action(0x0A, 0x02);
+            } else if (evt == 0x03 && len >= 2) {
+                /* Rotation → adjust current parameter */
+                int8_t delta = (int8_t)data[1];
+                if (delta != 0 && s_hmi_page != HMI_PAGE_LIVE) {
+                    hmi_apply_encoder_delta(delta);
+                }
+            }
+        }
         break;
 
     default:
@@ -806,7 +830,7 @@ static void parse_rx_byte(uint8_t byte)
 /* ========================================================================= */
 /*  LEDA Indicator LEDs — 8 green LEDs next to panel buttons                 */
 /*  Circuit: 3V3 → R(680Ω) → LED → GPIO pin  (active-low: LOW=ON)          */
-/*  LEDA1=PA5(KEY1) LEDA2=PC4(KEY2) LEDA3=PC5(KEY3) LEDA4=PB2(KEY4)        */
+/*  LEDA1=PA5(KEY1) LEDA2=PC4(KEY2) LEDA3=PC5(KEY3) LEDA4=PB10(KEY4)       */
 /*  LEDA5=PC13(KEY5) LEDA6=PA0(KEY6) LEDA7=PC15(KEY7) LEDA8=PA15(KEY8)     */
 /* ========================================================================= */
 
@@ -831,12 +855,14 @@ static void LEDA_Init(void)
     /* Default HIGH = LEDs off */
     GPIOA_BSRR = (1 << 0) | (1 << 5) | (1 << 15);
 
-    /* --- GPIOB: PB2[11:8] --- */
-    crl = GPIOB_CRL;
-    crl &= ~(0xFU << 8);    /* PB2 */
-    crl |=  (0x2U << 8);
-    GPIOB_CRL = crl;
-    GPIOB_BSRR = (1 << 2);  /* HIGH = off */
+    /* --- GPIOB: PB10[11:8] (CRH) — LEDA4 红蓝光指示 --- */
+    {
+        uint32_t b_crh = GPIOB_CRH;
+        b_crh &= ~(0xFU << 8);     /* PB10 bits[11:8] in CRH */
+        b_crh |=  (0x2U << 8);     /* Output PP 2MHz */
+        GPIOB_CRH = b_crh;
+        GPIOB_BSRR = (1 << 10);    /* HIGH = off */
+    }
 
     /* --- GPIOC: PC4[19:16], PC5[23:20], PC13 via CRH[23:20], PC15 via CRH[31:28] --- */
     crl = GPIOC_CRL;
@@ -878,9 +904,9 @@ static void LEDA_Update(void)
     if (light_st & (1 << 0)) GPIOC_BSRR = (1 << (5 + 16));
     else                     GPIOC_BSRR = (1 << 5);
 
-    /* LEDA4 PB2:  KEY4 红蓝光 — light_status bit2 or bit3 */
-    if (light_st & ((1 << 2) | (1 << 3))) GPIOB_BSRR = (1 << (2 + 16));
-    else                                   GPIOB_BSRR = (1 << 2);
+    /* LEDA4 PB10: KEY4 红蓝光 — light_status bit2 or bit3 */
+    if (light_st & ((1 << 2) | (1 << 3))) GPIOB_BSRR = (1 << (10 + 16));
+    else                                   GPIOB_BSRR = (1 << 10);
 
     /* LEDA5 PC13: KEY5 紫外灯 — relay ZIY bit3 */
     if (relay_st & (1 << 3)) GPIOC_BSRR = (1 << (13 + 16));
@@ -1066,7 +1092,7 @@ static void TM1640_Update(void)
 /*  Pins:                                                                    */
 /*    KEY1=PB12  KEY2=PB13  KEY3=PB14  KEY4=PB15                            */
 /*    KEY5=PC6   KEY6=PC7   KEY7=PC8   KEY8=PC9                             */
-/*    KEY9=PA8   Encoder push=PA7 (rotation disabled, PB2→LEDA4)            */
+/*    KEY9=PA8   (Encoder is on main board, not screen board)              */
 /*  Protocol key IDs (0x82 packet):                                          */
 /*    0x01-0x09 = KEY1-KEY9,  0x0A = encoder push                           */
 /*  Action: 0x01=click  0x02=long press                                      */
@@ -1085,22 +1111,19 @@ static void Key_Init(void)
     /* All key/encoder pins: input with pull-up (CNF=10, MODE=00 → nibble 0x8)
      * Then set ODR bit = 1 to select pull-up (vs pull-down) */
 
-    /* --- GPIOA: PA7(enc push), PA8(KEY9) --- */
-    /* PA7: CRL[31:28] — PA6 no longer used (encoder B removed) */
-    uint32_t crl = GPIOA_CRL;
-    crl &= ~(0xFU << 28);          /* Clear PA7 only */
-    crl |=  (0x8U << 28);          /* Input pull-up/down */
-    GPIOA_CRL = crl;
+    /* --- GPIOA: PA8(KEY9) --- */
+    /* Encoder (PA6/PA7) is on MAIN BOARD, not screen board */
+    uint32_t crl;  /* reused below for GPIOC_CRL */
     /* PA8: CRH[3:0] */
     uint32_t crh = GPIOA_CRH;
     crh &= ~0xFU;                  /* Clear PA8 */
     crh |=  0x8U;                  /* Input pull-up/down */
     GPIOA_CRH = crh;
     /* Enable pull-ups: set ODR bits */
-    GPIOA_ODR |= (1 << 7) | (1 << 8);
+    GPIOA_ODR |= (1 << 8);  /* Pull-up for PA8 (KEY9) */
 
     /* --- GPIOB: PB12-PB15(KEY1-KEY4) --- */
-    /* PB2 removed — now LEDA4 output, configured by LEDA_Init() */
+    /* PB2: not used on screen board (encoder is on main board) */
     /* PB12: CRH[19:16], PB13: [23:20], PB14: [27:24], PB15: [31:28] */
     crh = GPIOB_CRH;
     crh &= ~0xFFFF0000U;           /* Clear PB12-PB15 */
@@ -1122,7 +1145,7 @@ static void Key_Init(void)
     GPIOC_CRH = crh;
     GPIOC_ODR |= (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9);
 
-    /* Encoder rotation disabled (PB2→LEDA4). Push button (PA7) still active as key. */
+    /* Encoder on main board — no local init needed */
 }
 
 /* Read raw pin for key index 0-9, returns 1=pressed */
@@ -1139,7 +1162,6 @@ static uint8_t key_read_raw(uint8_t idx)
     case 6: level = GPIOC_IDR & (1 << 8);  break;  /* KEY7 PC8  */
     case 7: level = GPIOC_IDR & (1 << 9);  break;  /* KEY8 PC9  */
     case 8: level = GPIOA_IDR & (1 << 8);  break;  /* KEY9 PA8  */
-    case 9: level = GPIOA_IDR & (1 << 7);  break;  /* Enc push PA7 */
     default: return 0;
     }
 #if KEY_ACTIVE_HIGH
@@ -1181,8 +1203,8 @@ static void send_key_action(uint8_t key_id, uint8_t action_type)
  *   0x0A 编码器按下 (HMI单击; 长按清零供氧累计) */
 static const uint8_t KEY_ID_MAP[TOTAL_KEYS] = {
     0x01, 0x02, 0x03, 0x04, 0x05,  /* KEY1-KEY5 */
-    0x06, 0x07, 0x08, 0x09,        /* KEY6-KEY9 */
-    0x0A                            /* Encoder push */
+    0x06, 0x07, 0x08, 0x09         /* KEY6-KEY9 */
+    /* Encoder push (0x0A) is on main board, handled via 0x86 command */
 };
 
 /* Called every 20ms from main loop */
@@ -1226,11 +1248,11 @@ static void Key_Scan(void)
         }
     }
 
-    /* Encoder rotation removed (PB2 repurposed as LEDA4 indicator LED) */
+    /* Encoder rotation is on main board — screen board receives events via 0x86 */
 }
 
-/* Encoder rotation removed — PB2 repurposed as LEDA4 indicator LED.
- * HMI parameter adjustment via encoder is no longer available. */
+/* Encoder is on main board. Screen board receives encoder events via 0x86 command.
+ * HMI: push=cycle pages, rotate=adjust parameter value, 5s timeout. */
 
 /* ========================================================================= */
 /*  Main                                                                     */

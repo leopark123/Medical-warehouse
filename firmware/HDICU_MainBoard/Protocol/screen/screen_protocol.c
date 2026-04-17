@@ -336,3 +336,15 @@ uint32_t screen_protocol_last_frame_tick(void)
 {
     return s_last_rx_time_ms;
 }
+
+void screen_send_encoder_event(uint8_t event_type, int8_t delta)
+{
+    /* 0x06 Encoder Event: event_type(1B) + delta(1B)
+     * event_type: 0x01=push click, 0x02=push long, 0x03=rotation
+     * delta: signed rotation clicks (only meaningful for type 0x03) */
+    uint8_t payload[2];
+    payload[0] = event_type;
+    payload[1] = (uint8_t)delta;
+    uint16_t flen = frame_build_screen(s_tx_buf, 0x06, payload, 2);
+    bsp_uart_screen_send(s_tx_buf, flen);
+}

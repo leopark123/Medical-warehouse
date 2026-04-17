@@ -35,6 +35,11 @@ bool screen_protocol_is_connected(void);
 /* Return tick of last successfully parsed frame (0 if none yet) */
 uint32_t screen_protocol_last_frame_tick(void);
 
+/* Send encoder event to screen board (0x06 command)
+ * event_type: 0x01=push click, 0x02=push long, 0x03=rotation
+ * delta: signed rotation clicks (for type 0x03) */
+void screen_send_encoder_event(uint8_t event_type, int8_t delta);
+
 #ifdef __cplusplus
 }
 #endif

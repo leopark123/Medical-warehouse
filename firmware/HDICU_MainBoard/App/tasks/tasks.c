@@ -390,7 +390,74 @@ static void CommScreenTask(void *arg)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_COMM_SCREEN_MS));
+        /* === Encoder scan — fast 5ms sub-loop within 100ms comm cycle ===
+         * Encoder Gray code needs <10ms polling to capture all transitions.
+         * Run 20×5ms = 100ms of encoder polling, then proceed to next comm cycle. */
+        {
+            static uint8_t enc_last = 0xFF;  /* init sentinel */
+            static int8_t  enc_accum = 0;
+            static uint8_t push_state = 0;
+            static uint8_t push_debounce = 0;
+            static uint32_t push_tick = 0;
+            static uint8_t push_long_sent = 0;
+
+            static const int8_t enc_table[16] = {
+                 0, +1, -1,  0,
+                -1,  0,  0, +1,
+                +1,  0,  0, -1,
+                 0, -1, +1,  0
+            };
+
+            for (uint8_t poll = 0; poll < 20; poll++) {
+                /* --- Rotation decode (every 5ms) --- */
+                uint8_t a = (GPIOB->IDR & GPIO_PIN_2) ? 1 : 0;
+                uint8_t b = (GPIOA->IDR & GPIO_PIN_6) ? 1 : 0;
+                uint8_t enc_now = (a << 1) | b;
+
+                if (enc_last == 0xFF) {
+                    enc_last = enc_now;
+                } else if (enc_now != enc_last) {
+                    enc_accum += enc_table[(enc_last << 2) | enc_now];
+                    enc_last = enc_now;
+                }
+
+                /* --- Push button debounce (every 5ms, 3 samples = 15ms) --- */
+                uint8_t push_raw = (GPIOA->IDR & GPIO_PIN_7) ? 0 : 1;
+                if (push_raw == push_state) {
+                    push_debounce = 0;
+                    if (push_state && !push_long_sent) {
+                        if (HAL_GetTick() - push_tick >= 2000) {
+                            if (screen_protocol_is_connected())
+                                screen_send_encoder_event(0x02, 0);
+                            push_long_sent = 1;
+                        }
+                    }
+                } else {
+                    push_debounce++;
+                    if (push_debounce >= 3) {  /* 3×5ms = 15ms debounce */
+                        push_debounce = 0;
+                        push_state = push_raw;
+                        if (push_raw) {
+                            push_tick = HAL_GetTick();
+                            push_long_sent = 0;
+                        } else if (!push_long_sent && screen_protocol_is_connected()) {
+                            screen_send_encoder_event(0x01, 0);
+                        }
+                    }
+                }
+
+                vTaskDelay(pdMS_TO_TICKS(5));
+            }
+
+            /* After 100ms of polling, send accumulated rotation */
+            int8_t clicks = enc_accum / 4;
+            if (clicks != 0) {
+                enc_accum -= clicks * 4;
+                if (screen_protocol_is_connected()) {
+                    screen_send_encoder_event(0x03, clicks);
+                }
+            }
+        }
     }
 }
 
