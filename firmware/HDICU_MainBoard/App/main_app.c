@@ -118,19 +118,25 @@ void app_init(void)
                           BSP_MAGNET_PIN,
                           GPIO_PIN_RESET);
 
-        /* PB5: GY-IO制氧机信号 + PB6: ZY-IO(空置,输出低防漂浮) + PB12: 压缩机指示灯 */
-        gpio.Pin = BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN;
+        /* PB5: 握手输出(默认HIGH) + PB12: 压缩机指示灯 */
+        gpio.Pin = BSP_GY_PIN | BSP_COMPRESSOR_LED_PIN;
         HAL_GPIO_Init(GPIOB, &gpio);
-        HAL_GPIO_WritePin(GPIOB, BSP_GY_PIN | GPIO_PIN_6 | BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BSP_GY_PORT, BSP_GY_PIN, GPIO_PIN_SET);  /* PB5 初始HIGH */
+        HAL_GPIO_WritePin(GPIOB, BSP_COMPRESSOR_LED_PIN, GPIO_PIN_RESET);
 
-        /* 2d. Encoder inputs (CN17): PB2=A, PA6=B, PA7=Push — all input pull-up */
+        /* 2d. 输入引脚 (input pull-up):
+         *   编码器 CN17: PB2=A, PA6=B, PA7=Push
+         *   外部O2请求: PD8(总制氧机) + PB6(制氧机) 均为active-low */
         __HAL_RCC_GPIOA_CLK_ENABLE();
+        __HAL_RCC_GPIOD_CLK_ENABLE();  /* PD8 需要GPIOD */
         gpio.Mode = GPIO_MODE_INPUT;
         gpio.Pull = GPIO_PULLUP;
         gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;  /* PA6(enc B) + PA7(enc push) */
         HAL_GPIO_Init(GPIOA, &gpio);
-        gpio.Pin = GPIO_PIN_2;                /* PB2(enc A) */
+        gpio.Pin = GPIO_PIN_2 | BSP_O2_REQ_PIN;  /* PB2(enc A) + PB6(O2请求) */
         HAL_GPIO_Init(GPIOB, &gpio);
+        gpio.Pin = BSP_O2_MASTER_PIN;            /* PD8(总O2请求) */
+        HAL_GPIO_Init(BSP_O2_MASTER_PORT, &gpio);
     }
 
     /* 3. Initialize central data hub with power-on defaults */

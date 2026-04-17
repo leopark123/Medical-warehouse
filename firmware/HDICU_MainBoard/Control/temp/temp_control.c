@@ -15,9 +15,10 @@ void temp_control_update(AppData_t *d)
     /* Sensor validity check: -999 = all channels invalid,
      * or temperature outside physically possible range (-40°C ~ +80°C).
      * Without this, disconnected NTC (ADC≈4094) gives ~-90°C → false heating. */
-    if (d->sensor.temperature_avg == -999 ||
-        d->sensor.temperature_avg < -400 ||
-        d->sensor.temperature_avg > 800) {
+    /* 温控只用PA4(NTC通道2), 与屏幕显示一致 */
+    if (d->sensor.temperature[2] == -999 ||
+        d->sensor.temperature[2] < -400 ||
+        d->sensor.temperature[2] > 800) {
         /* FAIL-SAFE: sensor invalid → force all temp-owned outputs OFF.
          * Do NOT "hold current state" — that leaves heaters running with no feedback. */
         uint16_t *r = &d->control.relay_status;
@@ -30,7 +31,7 @@ void temp_control_update(AppData_t *d)
         return;
     }
 
-    int16_t actual = d->sensor.temperature_avg;
+    int16_t actual = d->sensor.temperature[2];  /* PA4 */
     int16_t setpoint = (int16_t)d->setpoint.target_temp;
     int16_t upper = setpoint + TEMP_HYSTERESIS_X10;
     int16_t lower = setpoint - TEMP_HYSTERESIS_X10;

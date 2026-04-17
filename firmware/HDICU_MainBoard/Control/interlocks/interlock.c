@@ -60,18 +60,20 @@ bool interlock_apply(AppData_t *d)
      * running before Rule 4 clears it. */
     const bool fogging_active = relay_is_on(*r, BSP_RELAY_WH_IO);
     const bool open_o2_requested = (d->control.switch_status & SW_BIT_OPEN_O2) != 0;
+    const bool external_o2_demand = d->sensor.o2_master_demand || d->sensor.o2_req_demand;
 
     /* ------------------------------------------------------------------- */
     /* Rule 5: During fogging, Open O2 forbidden (MUST run BEFORE Rule 4)  */
-    /* Uses pre-interlock snapshot to detect fogging before Rule 4 clears  */
-    /* the fogging relay.                                                  */
+    /* Extended: external O2 demand (PD8/PB6) also blocked during fogging  */
+    /* to prevent oxygen-rich + aerosol mix (safety critical).             */
     /* ------------------------------------------------------------------- */
-    if (fogging_active && open_o2_requested) {
+    if (fogging_active && (open_o2_requested || external_o2_demand)) {
         /* Fogging takes priority — block open O2 request */
         d->control.switch_status &= ~SW_BIT_OPEN_O2;
         d->setpoint.open_o2 = 0;   /* Revert setpoint to prevent re-sync next cycle */
 
-        /* Close O2 valve unless normal supply (oxygen_control) needs it */
+        /* Close O2 valve unless normal supply (oxygen_control) needs it
+         * 注意: 外部请求被互锁阻止时, O2阀会被强制关闭 — 外部设备的请求在此失效 */
         if (d->control.o2_state != O2_STATE_SUPPLYING) {
             relay_clear(r, BSP_RELAY_O2_IO);
         }
@@ -131,11 +133,21 @@ bool interlock_apply(AppData_t *d)
 
     /* ------------------------------------------------------------------- */
     /* Rule 2: UV disinfect ↔ Open O2 mutually exclusive                   */
+    /* 原规则: UV让步给手动开放供氧                                         */
+    /* 扩展: 外部O2请求(PD8/PB6) 让步给UV消毒 — UV安全优先                  */
     /* ------------------------------------------------------------------- */
     if (relay_is_on(*r, BSP_RELAY_ZIY_IO) &&
         (d->control.switch_status & SW_BIT_OPEN_O2)) {
         relay_clear(r, BSP_RELAY_ZIY_IO);
         d->control.disinfect_remaining = 0;
+        triggered = true;
+    }
+    if (relay_is_on(*r, BSP_RELAY_ZIY_IO) && external_o2_demand) {
+        /* UV运行中, 外部O2请求 让步 (UV优先) */
+        if (d->control.o2_state != O2_STATE_SUPPLYING &&
+            !(d->control.switch_status & SW_BIT_OPEN_O2)) {
+            relay_clear(r, BSP_RELAY_O2_IO);
+        }
         triggered = true;
     }
 

@@ -40,7 +40,9 @@ typedef struct {
     bool     jfc103_valid;      /* true if JFC103 responding */
     uint8_t  liquid_level;      /* 1=normal, 0=low (PB14, active low with pullup) */
     uint8_t  urine_detect;      /* 1=normal, 0=detected (PB15, active low with pullup) */
-    uint8_t  _pad;              /* Explicit padding to ensure 2-byte alignment for next struct */
+    bool     o2_master_demand;  /* PD8 active-low: external master oxygen machine request */
+    bool     o2_req_demand;     /* PB6 active-low: external oxygen machine request */
+    /* struct现已30字节, 2字节对齐, Setpoints_t从offset 30开始 */
 } SensorData_t;
 
 /* ========================================================================= */

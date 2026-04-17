@@ -87,6 +87,20 @@ static void SensorTask(void *arg)
         d->sensor.liquid_level = (uint8_t)HAL_GPIO_ReadPin(BSP_LIQUID_DETECT_PORT, BSP_LIQUID_DETECT_PIN);
         d->sensor.urine_detect = (uint8_t)HAL_GPIO_ReadPin(BSP_URINE_DETECT_PORT, BSP_URINE_DETECT_PIN);
 
+        /* --- 外部O2请求信号 (PD8总制氧机 + PB6制氧机) 2×100ms去抖 ---
+         * active-low: LOW=请求打开O2阀 */
+        {
+            static uint8_t pd8_cnt = 0, pb6_cnt = 0;
+            uint8_t pd8_raw = (HAL_GPIO_ReadPin(BSP_O2_MASTER_PORT, BSP_O2_MASTER_PIN) == GPIO_PIN_RESET) ? 1 : 0;
+            uint8_t pb6_raw = (HAL_GPIO_ReadPin(BSP_O2_REQ_PORT, BSP_O2_REQ_PIN) == GPIO_PIN_RESET) ? 1 : 0;
+
+            if (pd8_raw) { if (pd8_cnt < 2) pd8_cnt++; } else { pd8_cnt = 0; }
+            if (pb6_raw) { if (pb6_cnt < 2) pb6_cnt++; } else { pb6_cnt = 0; }
+
+            d->sensor.o2_master_demand = (pd8_cnt >= 2);
+            d->sensor.o2_req_demand    = (pb6_cnt >= 2);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_SENSOR_MS));
     }
 }
@@ -167,10 +181,9 @@ static void ControlTask(void *arg)
                           (d->control.relay_status & (1U << BSP_RELAY_YASUO_IO)) ?
                           GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        /* Task5: 制氧机信号 — 跟随relay_status中O2_IO位(互锁后的实际状态) */
+        /* Task5(新): PB5握手应答信号 — 默认HIGH, PD8检测到LOW时输出LOW */
         HAL_GPIO_WritePin(BSP_GY_PORT, BSP_GY_PIN,
-                          (d->control.relay_status & (1U << BSP_RELAY_O2_IO)) ?
-                          GPIO_PIN_SET : GPIO_PIN_RESET);
+                          d->sensor.o2_master_demand ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
         /* Task3: 新风净化 → PTC风机全速通风
          * fresh_air=1时强制PTC风机100%。temp_control可能已设duty(加热安全),

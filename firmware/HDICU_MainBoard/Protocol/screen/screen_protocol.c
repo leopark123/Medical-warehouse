@@ -35,7 +35,7 @@ void screen_send_display_data(void)
     uint16_t s_fog_time, s_disinf_time;  /* total duration for progress bar */
 
     app_data_lock();
-    s_temp_avg      = d->sensor.temperature_avg;
+    s_temp_avg      = d->sensor.temperature[2];  /* 屏幕只显示PA4(NTC通道2), 其他通道由iPad读取 */
     s_humidity      = d->sensor.humidity;
     s_o2_percent    = d->sensor.o2_percent;
     s_co2_ppm       = d->sensor.co2_ppm;
@@ -189,18 +189,38 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
             case 0x01: /* 护理等级灯: cycle 1→2→3→1 */
                 d->setpoint.nursing_level = (d->setpoint.nursing_level % 3) + 1;
                 break;
-            case 0x02: /* 照明灯 toggle (light_ctrl bit1) */
-                d->setpoint.light_ctrl ^= 0x02;
+            case 0x02: /* 照明灯 — 观察组互斥(与检查灯互斥)
+                        * 方案B: 按CN8开照明→自动关检查；再按CN8→全组灭 */
+                if (d->setpoint.light_ctrl & 0x02) {
+                    /* 照明灯当前开 → 关闭 */
+                    d->setpoint.light_ctrl &= ~0x02;
+                } else {
+                    /* 开照明灯, 关检查灯 (观察组单选) */
+                    d->setpoint.light_ctrl = (d->setpoint.light_ctrl & ~0x03) | 0x02;
+                }
                 break;
-            case 0x03: /* 检查灯 toggle (light_ctrl bit0) */
-                d->setpoint.light_ctrl ^= 0x01;
+            case 0x03: /* 检查灯 — 观察组互斥(与照明灯互斥) */
+                if (d->setpoint.light_ctrl & 0x01) {
+                    /* 检查灯当前开 → 关闭 */
+                    d->setpoint.light_ctrl &= ~0x01;
+                } else {
+                    /* 开检查灯, 关照明灯 (观察组单选) */
+                    d->setpoint.light_ctrl = (d->setpoint.light_ctrl & ~0x03) | 0x01;
+                }
                 break;
-            case 0x04: /* 红蓝光 LED治疗灯 — CN36 L-LMP 控制板
-                        * 功能表 #8: 检查灯/照明/蓝光/红光 为同一控制板的4个灯。
-                        * "红蓝光"面板按钮同时控制 蓝(bit2) + 红(bit3) 治疗LED。
-                        * 低压LED经 light_ctrl 位图驱动，非220V红外灯继电器。 */
-                d->setpoint.light_ctrl ^= 0x0C;  /* bit2=蓝, bit3=红 */
+            case 0x04: /* 红蓝光 — 治疗组三态循环: 灭→蓝→红→灭
+                        * 方案B: 蓝(bit2)和红(bit3)互斥, CN7每按切换状态 */
+            {
+                uint8_t treat = d->setpoint.light_ctrl & 0x0C;
+                d->setpoint.light_ctrl &= ~0x0C;  /* 清除治疗组 */
+                if (treat == 0x00) {
+                    d->setpoint.light_ctrl |= 0x04;  /* 灭→蓝(bit2) */
+                } else if (treat == 0x04) {
+                    d->setpoint.light_ctrl |= 0x08;  /* 蓝→红(bit3) */
+                }
+                /* 红(0x08) 或 其他→ 全灭 (已清除) */
                 break;
+            }
 
             case 0x05: /* 紫外灯 = 启动/停止当前消毒定时周期
                         * 功能表 #6 规定: 紫外灯只能由消毒定时器触发。
