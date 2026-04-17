@@ -32,6 +32,7 @@ void screen_send_display_data(void)
     uint8_t  s_fan_speed, s_nursing_level, s_light_status, s_switch_status;
     uint16_t s_fog_rem, s_disinf_rem, s_o2_accum, s_relay_status;
     uint16_t s_alarm_flags;
+    uint16_t s_fog_time, s_disinf_time;  /* total duration for progress bar */
 
     app_data_lock();
     s_temp_avg      = d->sensor.temperature_avg;
@@ -49,6 +50,8 @@ void screen_send_display_data(void)
     s_light_status  = d->control.light_status;
     s_switch_status = d->control.switch_status;
     s_alarm_flags   = d->alarm.alarm_flags;
+    s_fog_time      = d->setpoint.fog_time;
+    s_disinf_time   = d->setpoint.disinfect_time;
     app_data_unlock();
 
     /* Build packet from local snapshot — no lock needed */
@@ -105,7 +108,13 @@ void screen_send_display_data(void)
     payload[20] = (uint8_t)(s_alarm_flags >> 8);
     payload[21] = (uint8_t)(s_alarm_flags & 0xFF);
 
-    /* Bytes 22-25: Reserved (zeroed) */
+    /* Bytes 22-23: Fog total duration (for progress bar) */
+    payload[22] = (uint8_t)(s_fog_time >> 8);
+    payload[23] = (uint8_t)(s_fog_time & 0xFF);
+
+    /* Bytes 24-25: Disinfect total duration (for progress bar) */
+    payload[24] = (uint8_t)(s_disinf_time >> 8);
+    payload[25] = (uint8_t)(s_disinf_time & 0xFF);
 
     uint16_t flen = frame_build_screen(s_tx_buf, SCR_CMD_DISPLAY_DATA, payload, SCR_DISPLAY_DATA_LEN);
     bsp_uart_screen_send(s_tx_buf, flen);

@@ -7,9 +7,9 @@
  *   Crystal: 8MHz HSE
  *   LED Driver: 2× TM1640 (DIN/SCLK serial)
  *   Keys: 9 independent buttons via XH2.54 connectors (CN1-CN9)
- *     CN1=KEY1(PB12) CN3=KEY2(PB13) CN5=KEY3(PB14) CN7=KEY4(PB15)
- *     CN2=KEY5(PC6)  CN4=KEY6(PC7)  CN6=KEY7(PC8)  CN8=KEY8(PC9)
- *     CN9=KEY9(PA8)
+ *     CN1(PB12)=护理等级  CN3(PB13)=照明灯(断路)  CN5(PB14)=检查灯  CN7(PB15)=红蓝光
+ *     CN2(PC6)=开放供氧   CN4(PC7)=内循环         CN6(PC8)=新风系统
+ *     CN8(PC9)=照明灯(替代CN3)  CN9(PA8)=报警确认
  *   Encoder: Physical encoder on MAIN BOARD (CN17), not screen board.
  *            Screen board receives encoder events via UART protocol (0x86).
  *   Indicator LEDs (active-low, GPIO LOW=ON):
@@ -720,27 +720,39 @@ static void update_display_from_data(void)
         s_u1_buf[9] = SEG_FONT[ss / 10];  /* GRID9 = 秒十位 (swapped) */
     }
 
-    /* === U1 indicator LEDs: GRID10/11/12 设备运行指示 === */
-    /* Relay bitmap bits (from bsp_config.h):
-     *   0=PTC, 1=JIARE(底热), 2=RED(空), 3=ZIY(UV), 4=O2,
-     *   5=JIASHI(加湿), 6=FENGJI(外风机), 7=YASUO(压缩机), 8=WH(雾化) */
+    /* === U1 GRID10-13: 报警 + 进度条 + 供氧指示 === */
     {
-        uint16_t alarm_flags  = (uint16_t)((d[20] << 8) | d[21]);
         uint16_t relay_status = (uint16_t)((d[16] << 8) | d[17]);
+        uint16_t fog_total    = (uint16_t)((d[22] << 8) | d[23]);
+        uint16_t dis_total    = (uint16_t)((d[24] << 8) | d[25]);
+        uint8_t  o2_on        = (relay_status & (1U << 4)) ? 1 : 0;
 
-        uint8_t fog_on  = (relay_status & (1U << 8)) ? 1 : 0;  /* WH 雾化 */
-        uint8_t uv_on   = (relay_status & (1U << 3)) ? 1 : 0;  /* ZIY 紫外 */
-        uint8_t humid_on = (relay_status & (1U << 5)) ? 1 : 0; /* JIASHI 加湿 */
-        uint8_t o2_on   = (relay_status & (1U << 4)) ? 1 : 0;  /* O2 供氧 */
-        uint8_t cool_on = (relay_status & (1U << 7)) ? 1 : 0;  /* YASUO 压缩机 */
-        uint8_t heat_on = (relay_status & ((1U << 0) | (1U << 1))) ? 1 : 0; /* PTC+底热 */
+        /* DIGA11 (buf[10]): 雾化进度条 — 4档 (remaining/total) */
+        if (fog_sec > 0 && fog_total > 0) {
+            uint8_t pct = (uint8_t)((uint32_t)fog_sec * 100 / fog_total);
+            if (pct > 100) pct = 100;
+            if      (pct >= 75) s_u1_buf[10] = 0xFF;  /* 4/4 全亮 */
+            else if (pct >= 50) s_u1_buf[10] = 0x7F;  /* 3/4 */
+            else if (pct >= 25) s_u1_buf[10] = 0x3F;  /* 2/4 */
+            else                s_u1_buf[10] = 0x06;   /* 1/4 少量 */
+        } else {
+            s_u1_buf[10] = 0x00;
+        }
 
-        /* GRID10: 报警指示 — 有报警时全亮 */
-        s_u1_buf[10] = (alarm_flags != 0) ? 0xFF : 0x00;
-        /* GRID11: 治疗/执行器运行 — 雾化、紫外消毒、加湿工作中 */
-        s_u1_buf[11] = (fog_on || uv_on || humid_on) ? 0xFF : 0x00;
-        /* GRID12: 温控/供氧运行 — O2供氧或压缩机制冷或加热中 */
-        s_u1_buf[12] = (o2_on || cool_on || heat_on) ? 0xFF : 0x00;
+        /* DIGA12 (buf[11]): 消毒进度条 — 4档 (remaining/total) */
+        if (dis_sec > 0 && dis_total > 0) {
+            uint8_t pct = (uint8_t)((uint32_t)dis_sec * 100 / dis_total);
+            if (pct > 100) pct = 100;
+            if      (pct >= 75) s_u1_buf[11] = 0xFF;
+            else if (pct >= 50) s_u1_buf[11] = 0x7F;
+            else if (pct >= 25) s_u1_buf[11] = 0x3F;
+            else                s_u1_buf[11] = 0x06;
+        } else {
+            s_u1_buf[11] = 0x00;
+        }
+
+        /* DIGA13 (buf[12]): 供氧指示灯 — O2阀开=亮, 关=灭 */
+        s_u1_buf[12] = o2_on ? 0xFF : 0x00;
     }
 
     /* Edit-mode overlay: alternate current value and setpoint every 500ms. */
@@ -767,7 +779,7 @@ static void update_display_from_data(void)
         default:
             break;
         }
-        s_u1_buf[11] = 0xFF;  /* simple edit indicator */
+        s_u1_buf[10] = 0xFF;  /* edit indicator on DIGA11 (共用雾化进度位) */
     }
 
     TM1640_Update();
@@ -908,21 +920,21 @@ static void LEDA_Update(void)
     if (light_st & ((1 << 2) | (1 << 3))) GPIOB_BSRR = (1 << (10 + 16));
     else                                   GPIOB_BSRR = (1 << 10);
 
-    /* LEDA5 PC13: KEY5 紫外灯 — relay ZIY bit3 */
-    if (relay_st & (1 << 3)) GPIOC_BSRR = (1 << (13 + 16));
+    /* LEDA5 PC13: CN2 开放式供氧 — relay O2 bit4 */
+    if (relay_st & (1 << 4)) GPIOC_BSRR = (1 << (13 + 16));
     else                     GPIOC_BSRR = (1 << 13);
 
-    /* LEDA6 PA0:  KEY6 开放供氧 — relay O2 bit4 */
-    if (relay_st & (1 << 4)) GPIOA_BSRR = (1 << (0 + 16));
-    else                     GPIOA_BSRR = (1 << 0);
+    /* LEDA6 PA0:  CN4 内循环 — switch_status bit0 */
+    if (switch_st & (1 << 0)) GPIOA_BSRR = (1 << (0 + 16));
+    else                      GPIOA_BSRR = (1 << 0);
 
-    /* LEDA7 PC15: KEY7 内循环 — switch_status bit0 */
-    if (switch_st & (1 << 0)) GPIOC_BSRR = (1 << (15 + 16));
+    /* LEDA7 PC15: CN6 新风系统 — switch_status bit1 */
+    if (switch_st & (1 << 1)) GPIOC_BSRR = (1 << (15 + 16));
     else                      GPIOC_BSRR = (1 << 15);
 
-    /* LEDA8 PA15: KEY8 新风净化 — switch_status bit1 */
-    if (switch_st & (1 << 1)) GPIOA_BSRR = (1 << (15 + 16));
-    else                      GPIOA_BSRR = (1 << 15);
+    /* LEDA8 PA15: CN8 照明灯(替代CN3) — light_status bit1 */
+    if (light_st & (1 << 1)) GPIOA_BSRR = (1 << (15 + 16));
+    else                     GPIOA_BSRR = (1 << 15);
 }
 
 /* ========================================================================= */
@@ -1202,9 +1214,16 @@ static void send_key_action(uint8_t key_id, uint8_t action_type)
  *   0x09 报警确认   (主板 alarm.acknowledged, 同时屏幕板发0x85)
  *   0x0A 编码器按下 (HMI单击; 长按清零供氧累计) */
 static const uint8_t KEY_ID_MAP[TOTAL_KEYS] = {
-    0x01, 0x02, 0x03, 0x04, 0x05,  /* KEY1-KEY5 */
-    0x06, 0x07, 0x08, 0x09         /* KEY6-KEY9 */
-    /* Encoder push (0x0A) is on main board, handled via 0x86 command */
+    0x01,  /* [0] CN1/PB12: 护理等级 */
+    0x02,  /* [1] CN3/PB13: 照明灯 (CN3断路, 由CN8替代) */
+    0x03,  /* [2] CN5/PB14: 检查灯 */
+    0x04,  /* [3] CN7/PB15: 红蓝光 */
+    0x06,  /* [4] CN2/PC6:  开放式供氧 (原理图标注: 开放式供养) */
+    0x07,  /* [5] CN4/PC7:  内循环 */
+    0x08,  /* [6] CN6/PC8:  新风系统 */
+    0x02,  /* [7] CN8/PC9:  照明灯 (替代断路CN3) */
+    0x09,  /* [8] CN9/PA8:  报警确认 */
+    /* 紫外灯(0x05)无面板按键, 仅iPad/定时器控制 */
 };
 
 /* Called every 20ms from main loop */
