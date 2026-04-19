@@ -144,7 +144,14 @@ void app_init(void)
 
     /* 4. Load persistent data from flash */
     if (flash_storage_init()) {
-        app_data_get()->system.total_runtime_min = flash_storage_get_runtime();
+        AppData_t *d = app_data_get();
+        d->system.total_runtime_min = flash_storage_get_runtime();
+
+        /* v2.1: 加载校准和限值配置 (覆盖app_data_init的硬编码默认值).
+         * Flash未写过时, 保持硬编码默认值. */
+        if (flash_storage_has_config()) {
+            flash_storage_load_config(&d->calibration, &d->limits);
+        }
     }
 
     /* 5. Initialize sensor drivers */

@@ -204,9 +204,13 @@
 /*  Flash Storage (Frozen — 开发基线 11.3, corrected from 0x08070000)         */
 /* ========================================================================= */
 #define BSP_FLASH_PARAM_BASE        0x0807F000U     /* Last 2 pages = 4KB */
-#define BSP_FLASH_PARAM_PAGE0       0x0807F000U     /* Page 254: 2KB */
-#define BSP_FLASH_PARAM_PAGE1       0x0807F800U     /* Page 255: 2KB */
+#define BSP_FLASH_PARAM_PAGE0       0x0807F000U     /* Page 254: runtime_min 主页 */
+#define BSP_FLASH_PARAM_PAGE1       0x0807F800U     /* Page 255: runtime_min 备份页 */
 #define BSP_FLASH_PAGE_SIZE         2048U
+
+/* v2.1: 配置存储 (校准+限值), 独立于runtime的另外两页 */
+#define BSP_FLASH_CONFIG_PAGE0      0x0807E000U     /* Page 252: 配置主页 */
+#define BSP_FLASH_CONFIG_PAGE1      0x0807E800U     /* Page 253: 配置备份页 */
 
 /* ========================================================================= */
 /*  FreeRTOS Task Priorities (Frozen — 开发基线 6.1)                          */

@@ -27,23 +27,28 @@ extern "C" {
 
 /* iPad APP -> MainController commands */
 #define IPAD_CMD_READ_PARAMS        0x01    /* Data len=0, response=0x02 */
-#define IPAD_CMD_WRITE_PARAMS       0x03    /* Data len=22, response=0x04 */
+#define IPAD_CMD_WRITE_PARAMS       0x03    /* Data len=30 (v2.1, was 22), response=0x04 */
 #define IPAD_CMD_READ_VITALS        0x05    /* Data len=0, response=0x06 */
 #define IPAD_CMD_READ_CURVE         0x07    /* Data len=1, response=0x08 (RESERVED) */
+#define IPAD_CMD_WRITE_LIMITS       0x09    /* Data len=18 (v2.1), response=0x04 */
+#define IPAD_CMD_READ_LIMITS        0x0A    /* Data len=0 (v2.1), response=0x0A (18B) */
+#define IPAD_CMD_FACTORY_RESET      0x0B    /* Data len=0 (v2.1), response=0x04 */
 
 /* MainController -> iPad APP responses */
-#define IPAD_RSP_PARAMS             0x02    /* Data len=34 */
+#define IPAD_RSP_PARAMS             0x02    /* Data len=46 (v2.1, was 34) */
 #define IPAD_RSP_WRITE_ACK          0x04    /* Data len=2 */
 #define IPAD_RSP_VITALS             0x06    /* Data len=20 */
 #define IPAD_RSP_CURVE              0x08    /* Data len=102 (RESERVED) */
+#define IPAD_RSP_LIMITS             0x0A    /* Data len=18 (v2.1) */
 #define IPAD_RSP_ERROR              0xFF    /* Data len=2 */
 
-/* iPad data lengths */
-#define IPAD_WRITE_DATA_LEN         22
-#define IPAD_PARAMS_RSP_LEN         34
+/* iPad data lengths (v2.1) */
+#define IPAD_WRITE_DATA_LEN         30      /* v2.1: was 22 */
+#define IPAD_PARAMS_RSP_LEN         46      /* v2.1: was 34 */
 #define IPAD_WRITE_ACK_LEN          2
 #define IPAD_VITALS_RSP_LEN         20
 #define IPAD_CURVE_RSP_LEN          102     /* RESERVED: not implemented this phase */
+#define IPAD_LIMITS_DATA_LEN        18      /* v2.1: 0x09 write / 0x0A response */
 #define IPAD_ERROR_RSP_LEN          2
 
 /* iPad write result codes */
@@ -61,6 +66,8 @@ extern "C" {
 #define IPAD_ERR_DISINFECT_OOB      0x06
 #define IPAD_ERR_FAN_OOB            0x07
 #define IPAD_ERR_NURSING_OOB        0x08
+#define IPAD_ERR_CAL_OOB            0x09    /* v2.1: calibration value out of range */
+#define IPAD_ERR_LIMITS_INVALID     0x0A    /* v2.1: factory limits invalid (e.g., lower > upper) */
 
 /* iPad error response types */
 #define IPAD_EXCEPT_CMD_UNSUPPORTED 0x01

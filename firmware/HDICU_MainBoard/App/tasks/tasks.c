@@ -101,6 +101,45 @@ static void SensorTask(void *arg)
             d->sensor.o2_req_demand    = (pb6_cnt >= 2);
         }
 
+        /* === v2.1: 应用校准偏移 ===
+         * 校准值直接加到sensor字段上, 使控制决策和上报值一致.
+         * 防溢出clamp到合理范围. */
+        {
+            /* Temperature: clamp to [-999, +800] (×10) */
+            if (d->sensor.temperature_avg != -999) {
+                int32_t t = (int32_t)d->sensor.temperature_avg + d->calibration.temp;
+                if (t < -999) t = -999;
+                if (t > 800) t = 800;
+                d->sensor.temperature_avg = (int16_t)t;
+            }
+
+            /* Humidity: clamp to [0, 1000] (×10 = 100%) */
+            if (d->sensor.o2_valid) {  /* humidity_raw来自O2传感器, o2_valid能用时humidity也有效 */
+                int32_t h = (int32_t)d->sensor.humidity_raw + d->calibration.humid;
+                if (h < 0) h = 0;
+                if (h > 1000) h = 1000;
+                d->sensor.humidity_raw = (uint16_t)h;
+                d->sensor.humidity = (uint8_t)((h + 5) / 10);
+            }
+
+            /* O2: clamp to [0, 1000] (×10 = 100%) */
+            if (d->sensor.o2_valid) {
+                int32_t o = (int32_t)d->sensor.o2_raw + d->calibration.o2;
+                if (o < 0) o = 0;
+                if (o > 1000) o = 1000;
+                d->sensor.o2_raw = (uint16_t)o;
+                d->sensor.o2_percent = (uint8_t)((o + 5) / 10);
+            }
+
+            /* CO2: clamp to [0, 65535] ppm */
+            if (d->sensor.co2_valid) {
+                int32_t c = (int32_t)d->sensor.co2_ppm + d->calibration.co2;
+                if (c < 0) c = 0;
+                if (c > 65535) c = 65535;
+                d->sensor.co2_ppm = (uint16_t)c;
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_SENSOR_MS));
     }
 }
@@ -593,9 +632,12 @@ static void SystemTask(void *arg)
             d->system.total_runtime_min++;
         }
 
-        /* Flash save every 10 minutes (600 seconds) */
+        /* Flash save every 1 hour (3600 seconds) — v2.1 reduced from 10min for Flash longevity.
+         * Previous 10min: ~4.6 months to 14 months wear-out (min/typical cycles).
+         * New 1 hour: ~27 months to 7 years, sufficient for medical device lifetime.
+         * Tradeoff: power-loss may lose up to 1 hour of runtime record (acceptable). */
         save_counter++;
-        if (save_counter >= 600) {
+        if (save_counter >= 3600) {
             save_counter = 0;
             flash_storage_save(d->system.total_runtime_min);
         }

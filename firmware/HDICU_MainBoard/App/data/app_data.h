@@ -148,14 +148,55 @@ typedef struct {
 } SystemState_t;
 
 /* ========================================================================= */
+/*  Calibration Data (v2.1, Flash-persistent)                                */
+/*  Applied to sensor readings before upload to iPad/screen and control      */
+/* ========================================================================= */
+typedef struct {
+    int16_t  temp;              /* x10, -500~+500 (-50.0~+50.0°C) */
+    int16_t  humid;             /* x10, -500~+500 */
+    int16_t  o2;                /* x10, -500~+500 */
+    int16_t  co2;               /* ppm, -5000~+5000 */
+} CalibrationData_t;
+
+/* ========================================================================= */
+/*  Factory Limits (v2.1, Flash-persistent)                                  */
+/*  Written by iPad 0x09 command, used for dynamic OOB check on 0x03         */
+/* ========================================================================= */
+typedef struct {
+    uint16_t temp_upper;        /* x10, default 400 (40.0°C) */
+    uint16_t temp_lower;        /* x10, default 100 (10.0°C) */
+    uint16_t humid_upper;       /* x10, default 900 */
+    uint16_t humid_lower;       /* x10, default 300 */
+    uint16_t o2_upper;          /* x10, default 1000 (100.0%) */
+    uint16_t o2_lower;          /* x10, default 210 (21.0%) */
+    uint16_t uv_upper;          /* seconds, default 3600 */
+    uint16_t infrared_upper;    /* seconds, default 3600 (reserved for future IR feature) */
+    uint16_t fog_upper;         /* seconds, default 3600 */
+} FactoryLimits_t;
+
+/* ========================================================================= */
+/*  Cancel Flags (v2.1, NOT persisted — session state only)                  */
+/*  0 = cancelled (parameter update ignored), 1 = enabled (normal update)    */
+/* ========================================================================= */
+typedef struct {
+    uint8_t  temp;              /* default 1 = enabled on boot */
+    uint8_t  humid;
+    uint8_t  o2;
+    uint8_t  co2;
+} CancelFlags_t;
+
+/* ========================================================================= */
 /*  Global Application Data (singleton)                                      */
 /* ========================================================================= */
 typedef struct {
-    SensorData_t    sensor;
-    Setpoints_t     setpoint;
-    ControlState_t  control;
-    AlarmState_t    alarm;
-    SystemState_t   system;
+    SensorData_t     sensor;
+    Setpoints_t      setpoint;
+    ControlState_t   control;
+    AlarmState_t     alarm;
+    SystemState_t    system;
+    CalibrationData_t calibration;  /* v2.1: Flash-persistent */
+    FactoryLimits_t   limits;       /* v2.1: Flash-persistent */
+    CancelFlags_t     cancel_flags; /* v2.1: session state */
 } AppData_t;
 
 /* Global instance access */
