@@ -37,6 +37,13 @@ desktop.ini
 # Audit renders
 .audit_renders/
 
+# Temporary working directory (docs generators, screenshots, dumps)
+tmp/
+
+# JLink dump output (local debug only)
+C:/hdicu_dump/
+/c/hdicu_dump/
+
 # === Exclude non-core content ===
 # Archive
 99_Archive_旧版本/

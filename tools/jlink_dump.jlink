@@ -1,0 +1,8 @@
+device STM32F103VE
+si SWD
+speed 4000
+connect
+savebin C:\hdicu_dump\appdata.bin 0x20000138 0x78
+savebin C:\hdicu_dump\flash_cfg.bin 0x0807E000 0x40
+savebin C:\hdicu_dump\flash_runtime.bin 0x0807F000 0x40
+q
