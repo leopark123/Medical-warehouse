@@ -189,24 +189,11 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
             case 0x01: /* 护理等级灯: cycle 1→2→3→1 */
                 d->setpoint.nursing_level = (d->setpoint.nursing_level % 3) + 1;
                 break;
-            case 0x02: /* 照明灯 — 观察组互斥(与检查灯互斥)
-                        * 方案B: 按CN8开照明→自动关检查；再按CN8→全组灭 */
-                if (d->setpoint.light_ctrl & 0x02) {
-                    /* 照明灯当前开 → 关闭 */
-                    d->setpoint.light_ctrl &= ~0x02;
-                } else {
-                    /* 开照明灯, 关检查灯 (观察组单选) */
-                    d->setpoint.light_ctrl = (d->setpoint.light_ctrl & ~0x03) | 0x02;
-                }
+            case 0x02: /* 照明灯 — 独立翻转(与检查灯不互锁) */
+                d->setpoint.light_ctrl ^= 0x02;  /* bit1 */
                 break;
-            case 0x03: /* 检查灯 — 观察组互斥(与照明灯互斥) */
-                if (d->setpoint.light_ctrl & 0x01) {
-                    /* 检查灯当前开 → 关闭 */
-                    d->setpoint.light_ctrl &= ~0x01;
-                } else {
-                    /* 开检查灯, 关照明灯 (观察组单选) */
-                    d->setpoint.light_ctrl = (d->setpoint.light_ctrl & ~0x03) | 0x01;
-                }
+            case 0x03: /* 检查灯 — 独立翻转(与照明灯不互锁) */
+                d->setpoint.light_ctrl ^= 0x01;  /* bit0 */
                 break;
             case 0x04: /* 红蓝光 — 治疗组三态循环: 灭→蓝→红→灭
                         * 方案B: 蓝(bit2)和红(bit3)互斥, CN7每按切换状态 */
@@ -235,8 +222,8 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
                 }
                 /* else: no preset time → ignore for safety */
                 break;
-            case 0x06: /* 开放式供氧 toggle */
-                d->setpoint.open_o2 = d->setpoint.open_o2 ? 0 : 1;
+            case 0x06: /* 开放式供氧 — 单击忽略, 必须长按2秒才触发(防误触)
+                        * 实际翻转逻辑在 action == 0x02 长按分支 */
                 break;
             case 0x07: /* 内/外循环 toggle */
                 d->setpoint.inner_cycle = d->setpoint.inner_cycle ? 0 : 1;
@@ -258,6 +245,9 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
         /* --- Long press actions (>2s) --- */
         else if (action == 0x02) {
             switch (key_id) {
+            case 0x06: /* 开放式供氧 — 长按2秒翻转 (防误触保护) */
+                d->setpoint.open_o2 = d->setpoint.open_o2 ? 0 : 1;
+                break;
             case 0x0A: /* 编码器长按3秒 = 供氧累计时间清零 (frozen spec 4.4) */
             {
                 extern void control_timers_reset_o2_accum(AppData_t *d);
