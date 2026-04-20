@@ -40,6 +40,9 @@ C_SOURCES = \
   App/data/app_data.c \
   App/tasks/tasks.c \
   App/freertos_hooks.c \
+  App/safety/safety.c \
+  App/safety/post.c \
+  App/safety/sensor_sanity.c \
   Protocol/common/protocol_frame.c \
   Protocol/ipad/ipad_protocol.c \
   Protocol/screen/screen_protocol.c \
@@ -94,6 +97,7 @@ C_INCLUDES = \
   -IBSP \
   -IApp/data \
   -IApp/tasks \
+  -IApp/safety \
   -IProtocol/common \
   -IProtocol/ipad \
   -IProtocol/screen \

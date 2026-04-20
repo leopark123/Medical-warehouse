@@ -16,6 +16,7 @@
 
 #include "interlock.h"
 #include "bsp_config.h"
+#include "FreeRTOS.h"   /* configASSERT */
 
 /* Helper: check if a relay is on in the bitmap */
 static inline bool relay_is_on(uint16_t bitmap, uint8_t idx) {
@@ -49,6 +50,8 @@ static void sync_switch_status(AppData_t *d)
 
 bool interlock_apply(AppData_t *d)
 {
+    configASSERT(d != NULL);
+
     bool triggered = false;
     uint16_t *r = &d->control.relay_status;
 

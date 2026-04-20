@@ -76,8 +76,12 @@ extern uint32_t SystemCoreClock;
  *   - After scheduler starts: calls both xPortSysTickHandler() and HAL_IncTick()
  * This prevents FreeRTOS tick from running before vTaskStartScheduler(). */
 
-/* Assert */
-#define configASSERT(x) if((x) == 0) { taskDISABLE_INTERRUPTS(); for(;;); }
+/* Assert — route all FreeRTOS + application asserts through safety module.
+ * safety_assert_fail() records the line then triggers audible fault pattern
+ * + IWDG reset. Declared here to avoid pulling safety.h into every FreeRTOS
+ * source; implementation in App/safety/safety.c. */
+extern __attribute__((noreturn)) void safety_assert_fail(unsigned long line);
+#define configASSERT(x) do { if ((x) == 0) { safety_assert_fail((unsigned long)__LINE__); } } while (0)
 
 /* Optional function includes */
 #define INCLUDE_vTaskDelay                  1

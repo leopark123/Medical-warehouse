@@ -36,6 +36,10 @@
 /* Flash storage */
 #include "flash_storage.h"
 
+/* Safety (fatal events + sensor sanity) */
+#include "safety.h"
+#include "sensor_sanity.h"
+
 /* FreeRTOS */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -139,6 +143,20 @@ static void SensorTask(void *arg)
                 d->sensor.co2_ppm = (uint16_t)c;
             }
         }
+
+        /* === P0 safety: sensor plausibility + rate-of-change checks ===
+         * Advisory only — failures logged via safety_record() for later export.
+         * Control decisions still use the raw (potentially suspect) values;
+         * alarm subsystem has its own thresholds for user-visible warnings.
+         *
+         * valid flag lets the checker reset its rate-baseline across comms
+         * dropouts (FIX I4). NTC temperature "valid" is inferred from the
+         * -999 INVALID sentinel handled inside the checker. */
+        /* advisory; return intentionally ignored */
+        (void)sensor_sanity_check_temp(d->sensor.temperature_avg, true);
+        (void)sensor_sanity_check_humid(d->sensor.humidity_raw, d->sensor.o2_valid);
+        (void)sensor_sanity_check_o2(d->sensor.o2_raw, d->sensor.o2_valid);
+        (void)sensor_sanity_check_co2(d->sensor.co2_ppm, d->sensor.co2_valid);
 
         vTaskDelay(pdMS_TO_TICKS(TASK_PERIOD_SENSOR_MS));
     }
@@ -281,17 +299,38 @@ static void AlarmTask(void *arg)
             if (++temp_low_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_TEMP_LOW;
         } else { temp_low_cnt = 0; }
 
-        /* Humidity: setpoint ± 5%, 10s delay (skip if O2 sensor offline) */
-        if (d->sensor.o2_valid) {
+        /* Humidity: setpoint ± 5%, 60s delay (skip if O2 sensor offline).
+         *
+         * Two deliberate deviations from other alarm checks:
+         * 1. humidity_raw >= 100 (10%) gate — a sealed incubator without
+         *    active dehumidification cannot physically reach <10% RH, so a
+         *    reading below that is either sensor wiring not yet stabilized
+         *    or upstream data not yet populated. This gate prevents the
+         *    boot-time race where o2_valid flips true while humidity_raw
+         *    is still 0 from memset.
+         * 2. 60s delay (ALARM_DELAY_HUMID_TICKS = 600) instead of the 10s
+         *    used for other params — the humidifier physically needs
+         *    ~30–60s to raise cabinet humidity from ambient to setpoint;
+         *    shorter delays false-alarm on every power-up. Real persistent
+         *    out-of-range still surfaces within 1 minute (non-life-critical
+         *    alarm, acceptable trade-off). */
+        if (d->sensor.o2_valid && d->sensor.humidity_raw >= 100) {
             int16_t h_set = (int16_t)d->setpoint.target_humidity;
             if (d->sensor.humidity_raw > (uint16_t)(h_set + ALARM_HUMID_OFFSET_X10)) {
-                if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
+                if (++humid_cnt >= ALARM_DELAY_HUMID_TICKS) flags |= ALARM_HUMID;
             } else if (d->sensor.humidity_raw < (uint16_t)(h_set - ALARM_HUMID_OFFSET_X10)) {
-                if (++humid_cnt >= ALARM_DELAY_SLOW_TICKS) flags |= ALARM_HUMID;
+                if (++humid_cnt >= ALARM_DELAY_HUMID_TICKS) flags |= ALARM_HUMID;
             } else { humid_cnt = 0; }
         } else { humid_cnt = 0; }
 
-        /* O2: setpoint ± 5%, 10s delay (skip if O2 sensor offline) */
+        /* O2: setpoint ± 5%, 10s delay (skip if O2 sensor offline).
+         *
+         * NO low-bound gate here. Unlike humidity, a genuinely low O2
+         * reading (e.g. sensor reports 8%) is a real clinical emergency
+         * for an incubator patient — we must never mask it. The boot-time
+         * race does not apply: o2_valid and o2_raw are both written by the
+         * same SensorTask iteration (raw first, valid last), so by the
+         * time AlarmTask observes o2_valid=true, o2_raw is real data. */
         if (d->sensor.o2_valid) {
             int16_t o2_set = (int16_t)d->setpoint.target_o2;
             if (d->sensor.o2_raw > (uint16_t)(o2_set + ALARM_O2_OFFSET_X10) ||
@@ -621,7 +660,16 @@ static void SystemTask(void *arg)
     uart_driver_start_rx();
 
     for (;;) {
-        /* Feed watchdog — IWDG ~4s timeout, SystemTask runs every 1s */
+        /* Feed watchdog — IWDG ~4s timeout, SystemTask runs every 1s.
+         *
+         * Design choice: IWDG is ONLY refreshed here (lowest-priority task).
+         * No Idle-hook refresh, no other-task refresh. This ensures that if
+         * any higher-priority task hogs CPU > ~3s, SystemTask starves, IWDG
+         * fires, and the MCU resets. Feeding from Idle would mask such
+         * starvation and defeat the watchdog's fault-detection purpose.
+         *
+         * safety_fatal() paths refresh IWDG manually to stretch the audible
+         * beep window before letting the reset fire (see safety.c).  */
         IWDG->KR = 0xAAAA;     /* Reload IWDG counter */
 
         /* Uptime */
@@ -656,13 +704,11 @@ static void SystemTask(void *arg)
 /* ========================================================================= */
 void tasks_create_all(void)
 {
-    extern void fatal_init_error(void);
-
     /* Check each task creation individually — &= can mask failures */
-    if (xTaskCreate(SensorTask,     "Sensor",    TASK_STACK_SENSOR,      NULL, TASK_PRIO_SENSOR,      NULL) != pdPASS) fatal_init_error();
-    if (xTaskCreate(ControlTask,    "Control",   TASK_STACK_CONTROL,     NULL, TASK_PRIO_CONTROL,     NULL) != pdPASS) fatal_init_error();
-    if (xTaskCreate(AlarmTask,      "Alarm",     TASK_STACK_ALARM,       NULL, TASK_PRIO_ALARM,       NULL) != pdPASS) fatal_init_error();
-    if (xTaskCreate(CommScreenTask, "CommScr",   TASK_STACK_COMM_SCREEN, NULL, TASK_PRIO_COMM_SCREEN, NULL) != pdPASS) fatal_init_error();
-    if (xTaskCreate(CommIPadTask,   "CommIPad",  TASK_STACK_COMM_IPAD,   NULL, TASK_PRIO_COMM_IPAD,   NULL) != pdPASS) fatal_init_error();
-    if (xTaskCreate(SystemTask,     "System",    TASK_STACK_SYSTEM,      NULL, TASK_PRIO_SYSTEM,      NULL) != pdPASS) fatal_init_error();
+    if (xTaskCreate(SensorTask,     "Sensor",    TASK_STACK_SENSOR,      NULL, TASK_PRIO_SENSOR,      NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
+    if (xTaskCreate(ControlTask,    "Control",   TASK_STACK_CONTROL,     NULL, TASK_PRIO_CONTROL,     NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
+    if (xTaskCreate(AlarmTask,      "Alarm",     TASK_STACK_ALARM,       NULL, TASK_PRIO_ALARM,       NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
+    if (xTaskCreate(CommScreenTask, "CommScr",   TASK_STACK_COMM_SCREEN, NULL, TASK_PRIO_COMM_SCREEN, NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
+    if (xTaskCreate(CommIPadTask,   "CommIPad",  TASK_STACK_COMM_IPAD,   NULL, TASK_PRIO_COMM_IPAD,   NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
+    if (xTaskCreate(SystemTask,     "System",    TASK_STACK_SYSTEM,      NULL, TASK_PRIO_SYSTEM,      NULL) != pdPASS) safety_fatal(SAFETY_EVT_TASK_FAIL);
 }

@@ -39,7 +39,13 @@
 #define ALARM_SPO2_LOW_THRESHOLD    85
 
 /* Alarm delays (in AlarmTask ticks at 100ms period) */
-#define ALARM_DELAY_SLOW_TICKS      100     /* 10 seconds for temp/humid/O2/CO2 */
-#define ALARM_DELAY_FAST_TICKS      30      /* 3 seconds for HR/SpO2 */
+#define ALARM_DELAY_SLOW_TICKS      100     /* 10 seconds for temp/O2/CO2 (life-critical, fast response) */
+#define ALARM_DELAY_FAST_TICKS      30      /* 3 seconds for HR/SpO2 (vitals, faster) */
+#define ALARM_DELAY_HUMID_TICKS     600     /* 60 seconds for humidity.
+                                             * Rationale: humidifier physically needs ~30-60s
+                                             * to raise cabinet humidity from ambient to setpoint.
+                                             * Shorter delays false-alarm on every power-up.
+                                             * Humidity is non-life-critical; 1-minute window for
+                                             * real out-of-range reporting is clinically acceptable. */
 
 #endif

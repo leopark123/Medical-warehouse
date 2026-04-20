@@ -30,6 +30,11 @@
 /* Storage */
 #include "flash_storage.h"
 
+/* Safety (POST + fatal event handler + sensor sanity init) */
+#include "safety.h"
+#include "post.h"
+#include "sensor_sanity.h"
+
 /* FreeRTOS */
 #include "FreeRTOS.h"
 #include "task.h"
@@ -44,26 +49,30 @@ QueueHandle_t g_ipad_rx_queue;
 QueueHandle_t g_screen_rx_queue;
 
 /**
- * @brief Fatal init error — hang with buzzer on.
- *        Called when RTOS resource creation fails (queues, tasks).
+ * @brief Legacy fatal init error — forwards to unified safety_fatal().
+ *        Kept for backward compatibility with tasks.c external reference.
+ *        New code should call safety_fatal(SAFETY_EVT_xxx) directly.
  */
 void fatal_init_error(void)
 {
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    GPIO_InitTypeDef gpio = {0};
-    gpio.Pin = GPIO_PIN_3;  /* PB3 buzzer */
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    HAL_GPIO_Init(GPIOB, &gpio);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
-    for (;;) {}  /* Hang with buzzer on */
+    safety_fatal(SAFETY_EVT_TASK_FAIL);
 }
 
 void app_init(void)
 {
+    /* 0. Power-On Self-Test — must pass before any peripheral init.
+     *    Tests: RAM pattern, stack probe, clock sanity, IWDG reload reg.
+     *    Failure → buzzer + WDT reset loop (safety_fatal).
+     *    Note: IWDG already started in main.c before app_init. */
+    PostResult_t post_r = post_run();
+    if (post_r != POST_OK) {
+        safety_fatal(SAFETY_EVT_POST_FAIL);
+    }
+
     /* 1. Create RX queues BEFORE initializing UART (which enables interrupts) */
     g_ipad_rx_queue = xQueueCreate(UART_RX_QUEUE_LEN, sizeof(uint8_t));
     g_screen_rx_queue = xQueueCreate(UART_RX_QUEUE_LEN, sizeof(uint8_t));
-    if (!g_ipad_rx_queue || !g_screen_rx_queue) fatal_init_error();
+    if (!g_ipad_rx_queue || !g_screen_rx_queue) safety_fatal(SAFETY_EVT_QUEUE_FAIL);
 
     /* 2. Initialize hardware drivers */
     uart_driver_init();
@@ -158,6 +167,9 @@ void app_init(void)
     co2_sensor_init();
     o2_sensor_init();
     jfc103_sensor_init();
+
+    /* 5b. Initialize sensor plausibility baselines (P0 safety) */
+    sensor_sanity_init();
 
     /* 6. Initialize protocol handlers */
     ipad_protocol_init();
