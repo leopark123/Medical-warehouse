@@ -1,0 +1,6 @@
+device STM32F103VE
+si SWD
+speed 4000
+connect
+savebin C:\hdicu_dump\backup_full_flash_512K.bin 0x08000000 0x80000
+q

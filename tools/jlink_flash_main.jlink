@@ -1,0 +1,10 @@
+device STM32F103VE
+si SWD
+speed 4000
+connect
+halt
+loadbin C:\hdicu_dump\p0_to_flash.bin 0x08000000
+verifybin C:\hdicu_dump\p0_to_flash.bin 0x08000000
+r
+g
+q

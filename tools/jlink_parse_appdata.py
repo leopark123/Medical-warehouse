@@ -35,15 +35,18 @@ o2m, o2r = d[27], d[28]
 (tgt_t, tgt_h, tgt_o2, tgt_co2, fog_t, dis_t) = struct.unpack_from("<6H", d, 30)
 fan, nur, inner, fresh, opn, light = d[42:48]
 
-# ControlState (1-byte enums)
+# ControlState (1-byte enums, 18B total: 48-65)
 ts, hs, os_ = d[48], d[49], d[50]
+# pad byte 51
 (fog_r, dis_r, o2_acc, relay) = struct.unpack_from("<4H", d, 52)
 light_st, sw_st = d[60], d[61]
 tbr, tbc, fan_act, nur_act = d[62], d[63], d[64], d[65]
 
-# AlarmState at 68
-alarm = struct.unpack_from("<H", d, 68)[0]
-buzz, ack = d[70], d[71]
+# AlarmState at 66 (4B: 66-69) — FIX: was incorrectly at 68 before
+alarm = struct.unpack_from("<H", d, 66)[0]
+buzz, ack = d[68], d[69]
+
+# pad 70-71 (4-byte align for uint32)
 
 # SystemState at 72
 (runtime_min, uptime) = struct.unpack_from("<2I", d, 72)
