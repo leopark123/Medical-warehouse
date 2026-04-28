@@ -562,6 +562,13 @@ static void CommIPadTask(void *arg)
     extern QueueHandle_t g_ipad_rx_queue;
 
     for (;;) {
+        /* Check if ISR flagged a deferred recovery (e.g. ORE latched on UART2).
+         * Same pattern as CommScreenTask. Must run before queue drain so we
+         * recover the channel before processing any (possibly stale) bytes. */
+        if (g_uart_ipad_recover_pending) {
+            uart_driver_recover_ipad();
+        }
+
         /* Drain RX queue — process iPad bytes in task context (NOT ISR).
          * This is critical because handle_write_params() writes to shared AppData. */
         uint8_t rx_byte;

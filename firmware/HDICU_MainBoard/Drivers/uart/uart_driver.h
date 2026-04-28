@@ -34,11 +34,16 @@ void uart_rx_callback(UartChannel_t ch, uint8_t byte);
  * Call from task context when screen RX appears stuck. */
 void uart_driver_recover_screen(void);
 
+/* Force-recover UART_CH_IPAD — same pattern as screen recover.
+ * Call from task context when iPad RX appears stuck (e.g. ORE bit latched). */
+void uart_driver_recover_ipad(void);
+
 /* Diagnostic counters (volatile, read from any context) */
 extern volatile uint32_t g_uart_rx_ok[UART_CH_COUNT];
 extern volatile uint32_t g_uart_rx_err[UART_CH_COUNT];
 extern volatile uint32_t g_uart_rx_rearm_fail[UART_CH_COUNT];
 extern volatile uint32_t g_uart_last_errcode[UART_CH_COUNT];
 extern volatile uint8_t  g_uart_screen_recover_pending;
+extern volatile uint8_t  g_uart_ipad_recover_pending;
 
 #endif

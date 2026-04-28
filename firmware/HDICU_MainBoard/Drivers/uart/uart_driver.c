@@ -19,6 +19,7 @@ volatile uint32_t g_uart_last_errcode[UART_CH_COUNT];
 
 /* Deferred recovery flag — ISR sets, task clears (B2 fix) */
 volatile uint8_t g_uart_screen_recover_pending;
+volatile uint8_t g_uart_ipad_recover_pending;
 
 /* UART configuration table */
 static const struct {
@@ -139,6 +140,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 /* P1-2 fix: immediately flag recovery for screen channel */
                 if (i == UART_CH_SCREEN) {
                     g_uart_screen_recover_pending = 1;
+                } else if (i == UART_CH_IPAD) {
+                    /* P1-3 fix (2026-04-28): iPad rearm failure here is the
+                     * actual root cause of "iPad UART stuck after a while" —
+                     * NOT the ErrorCallback path. When HAL_UART_Receive_IT
+                     * fails (huart->Lock contention with TX), RXNEIE stays 0
+                     * and the channel dies silently. Defer recovery to task. */
+                    g_uart_ipad_recover_pending = 1;
                 }
             }
             return;
@@ -159,8 +167,15 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
                  * ISR only clears error flags and sets pending flag. */
                 __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
                 g_uart_screen_recover_pending = 1;
+            } else if (i == UART_CH_IPAD) {
+                /* iPad: defer to task — ISR-context Receive_IT can fail
+                 * silently (lock/state contention) and leave RXNEIE=0,
+                 * permanently killing the channel after ORE.
+                 * Mirrors the screen recovery (B2 fix extended). */
+                __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+                g_uart_ipad_recover_pending = 1;
             } else {
-                /* Light recovery for other channels */
+                /* Light recovery for sensor channels (CO2/O2/JFC103) */
                 __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
                 HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
             }
@@ -199,6 +214,32 @@ void uart_driver_recover_screen(void)
     HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
     g_uart_screen_recover_pending = 0;
     HAL_NVIC_EnableIRQ(USART1_IRQn);
+}
+
+/* Force-recover UART_CH_IPAD — mirrors uart_driver_recover_screen.
+ * Used when iPad RX channel is stuck (ORE latched, RXNEIE=0).
+ * Must be called from task context only. */
+void uart_driver_recover_ipad(void)
+{
+    int i = UART_CH_IPAD;
+    HAL_NVIC_DisableIRQ(USART2_IRQn);
+
+    HAL_UART_AbortReceive_IT(&s_huart[i]);
+    HAL_UART_DeInit(&s_huart[i]);
+
+    s_huart[i].Instance = s_uart_config[i].instance;
+    s_huart[i].Init.BaudRate = s_uart_config[i].baudrate;
+    s_huart[i].Init.WordLength = UART_WORDLENGTH_8B;
+    s_huart[i].Init.StopBits = UART_STOPBITS_1;
+    s_huart[i].Init.Parity = UART_PARITY_NONE;
+    s_huart[i].Init.Mode = UART_MODE_TX_RX;
+    s_huart[i].Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    HAL_UART_Init(&s_huart[i]);
+
+    __HAL_UART_CLEAR_PEFLAG(&s_huart[i]);
+    HAL_UART_Receive_IT(&s_huart[i], &s_rx_byte[i], 1);
+    g_uart_ipad_recover_pending = 0;
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
 }
 
 /* ===== IRQ Handlers — forward to HAL ===== */
