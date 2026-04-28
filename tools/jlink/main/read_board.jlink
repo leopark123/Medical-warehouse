@@ -1,0 +1,23 @@
+// J-Link Commander script — 主控板版本指纹（快版，不依赖 firmware.bin）
+// 由 read_board.bat 启动，输出到 read_board.log + board_dump.bin
+
+r
+
+// 指纹 1：AFIO MAPR — 期望 bit26-24=010 (SWJ_NOJTAG)
+mem32 0x40010004 1
+
+// 指纹 2：IWDG KR/PR/RLR/SR — 期望 PR=0x04, RLR=0x9C4
+mem32 0x40003000 4
+
+// 指纹 3：Flash 参数区 (3 个候选地址)
+mem 0x0807F000 32
+mem 0x0807E000 32
+mem 0x08070000 32
+
+// 指纹 4：复位向量
+mem32 0x08000000 2
+
+// 整片 Flash dump
+savebin board_dump.bin 0x08000000 0x80000
+
+q

@@ -1,0 +1,23 @@
+// 屏幕板版本指纹 + 代码区 dump (GD32F303RCT6)
+r
+h
+
+// CPUID (期望 Cortex-M4 = 0x410FC241)
+mem32 0xE000ED00 1
+
+// 复位向量
+mem32 0x08000000 8
+
+// 程序起点首部 (用于版本指纹)
+mem 0x08000000 64
+
+// AFIO MAPR — 期望 SWJ_NOJTAG (0x02 << 24)
+mem32 0x40010004 1
+
+// IWDG (期望 PR=4, RLR=1250 ~2s)
+mem32 0x40003000 4
+
+// Dump 前 8KB 用于完整对比 (源 bin 4.7KB)
+savebin screen_dump.bin 0x08000000 0x2000
+
+q

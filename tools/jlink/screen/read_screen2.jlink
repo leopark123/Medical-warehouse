@@ -1,0 +1,15 @@
+si SWD
+speed 4000
+device STM32F303RC
+connect
+
+// CPUID
+mem32 0xE000ED00 1
+
+// 复位向量 + 首部
+mem32 0x08000000 8
+mem 0x08000000 64
+
+savebin screen_dump.bin 0x08000000 0x2000
+
+q

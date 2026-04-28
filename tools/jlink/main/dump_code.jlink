@@ -1,0 +1,5 @@
+// Dump 主板代码区前 32KB 用于版本对比
+r
+h
+savebin board_code_dump.bin 0x08000000 0x8000
+q

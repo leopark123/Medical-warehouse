@@ -1,0 +1,27 @@
+// 轻量读板脚本 — 不 dump 整片 Flash, 只读指纹
+r
+h
+
+// CPUID (期望 0x411FC231 = Cortex-M3 r1p1 STM32F1)
+mem32 0xE000ED00 1
+
+// AFIO MAPR — 期望 bit26-24 = 0b010 (SWJ_NOJTAG, 释放 PB3/PB4)
+mem32 0x40010004 1
+
+// IWDG KR/PR/RLR/SR — 期望 PR=0x04, RLR=0x9C4 (~4s)
+mem32 0x40003000 4
+
+// 复位向量 (前 8 字 = sp + reset_handler + nmi + hardfault ...)
+mem32 0x08000000 8
+
+// 程序起点的几个字节（用来快速识别固件版本）
+mem 0x08000000 64
+
+// Flash 参数区 (v2.1 配置区 + runtime 区)
+mem 0x0807E000 32
+mem 0x0807F000 32
+
+// 程序运行状态确认 — 读一下 SP/PC
+regs
+
+q

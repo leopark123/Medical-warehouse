@@ -1,0 +1,14 @@
+si SWD
+speed 4000
+device GD32F303RC
+connect
+r
+h
+
+mem32 0xE000ED00 1
+mem32 0x08000000 4
+mem 0x08000000 32
+
+savebin flash_status.bin 0x08000000 0x2000
+
+q
