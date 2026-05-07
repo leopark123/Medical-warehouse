@@ -218,7 +218,7 @@ static void handle_write_params(const uint8_t *data, uint8_t len)
     if (!err_code && fog > d->limits.fog_upper)       err_code = IPAD_ERR_FOG_OOB;
     if (!err_code && disinf > d->limits.uv_upper)     err_code = IPAD_ERR_DISINFECT_OOB;
     if (!err_code && fan > 3)                         err_code = IPAD_ERR_FAN_OOB;
-    if (!err_code && (nursing < 1 || nursing > 3))    err_code = IPAD_ERR_NURSING_OOB;
+    if (!err_code && nursing > 4)                     err_code = IPAD_ERR_NURSING_OOB;   /* v4.1: 5 档 0~4 (Codex Block 2) */
     if (!err_code && cycle > 1)                       err_code = IPAD_ERR_NURSING_OOB;
     if (!err_code && fresh > 1)                       err_code = IPAD_ERR_NURSING_OOB;
     if (!err_code && open_o2 > 1)                     err_code = IPAD_ERR_NURSING_OOB;

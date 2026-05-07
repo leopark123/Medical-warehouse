@@ -298,8 +298,14 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
                         * 屏幕板 PC7 浮空容易被识别为按下→inner_cycle 卡 1 内循环灯一直亮.
                         * 改长按 2 秒触发, 跟 KEY5 开放供氧一致. 实际翻转在长按分支. */
                 break;
-            case 0x08: /* 新风净化 toggle */
-                d->setpoint.fresh_air = d->setpoint.fresh_air ? 0 : 1;
+            case 0x08: /* 新风净化 toggle
+                        * Stage 8 redo v4.1 (Codex Concern G): 双向互斥 — 开新风时清内循环 */
+                if (d->setpoint.fresh_air) {
+                    d->setpoint.fresh_air = 0;
+                } else {
+                    d->setpoint.fresh_air  = 1;
+                    d->setpoint.inner_cycle = 0;   /* 双向互斥 */
+                }
                 break;
             case 0x09: /* 报警确认 */
                 d->alarm.acknowledged = true;

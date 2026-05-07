@@ -64,22 +64,26 @@ bool interlock_apply(AppData_t *d)
     const bool fogging_active = relay_is_on(*r, BSP_RELAY_WH_IO);
     const bool open_o2_requested = (d->control.switch_status & SW_BIT_OPEN_O2) != 0;
     const bool external_o2_demand = d->sensor.o2_master_demand || d->sensor.o2_req_demand;
+    /* Stage 8 redo v4.1 (2026-05-07) Codex Block 3 修复:
+     * 自动 O2 闭环 (target_o2 < sensor.o2 → SUPPLYING) 也算 O2 阀活动,
+     * 跟雾化/UV 必须互斥 (氧气环境不能产生气溶胶或紫外光). */
+    const bool auto_o2_supplying = (d->control.o2_state == O2_STATE_SUPPLYING);
 
     /* ------------------------------------------------------------------- */
-    /* Rule 5: During fogging, Open O2 forbidden (MUST run BEFORE Rule 4)  */
-    /* Extended: external O2 demand (PD8/PB6) also blocked during fogging  */
-    /* to prevent oxygen-rich + aerosol mix (safety critical).             */
+    /* Rule 5: During fogging, ANY O2 valve activity forbidden             */
+    /* v4.1 Codex Block 3: 扩展互斥范围, 含手动 + 自动闭环 + 外部 demand,    */
+    /* 之前漏了自动 SUPPLYING 路径.                                          */
     /* ------------------------------------------------------------------- */
-    if (fogging_active && (open_o2_requested || external_o2_demand)) {
-        /* Fogging takes priority — block open O2 request */
+    if (fogging_active && (open_o2_requested || external_o2_demand || auto_o2_supplying)) {
+        /* Fogging takes priority — block all O2 paths */
         d->control.switch_status &= ~SW_BIT_OPEN_O2;
         d->setpoint.open_o2 = 0;   /* Revert setpoint to prevent re-sync next cycle */
-
-        /* Close O2 valve unless normal supply (oxygen_control) needs it
-         * 注意: 外部请求被互锁阻止时, O2阀会被强制关闭 — 外部设备的请求在此失效 */
-        if (d->control.o2_state != O2_STATE_SUPPLYING) {
-            relay_clear(r, BSP_RELAY_O2_IO);
+        /* v4.1: 自动闭环也强制让步, 避免 oxygen_control 下一拍又开阀 */
+        if (auto_o2_supplying) {
+            d->setpoint.enable_o2_ctrl = 0;
         }
+        /* O2 valve: 强制关 (雾化期间任何 O2 路径都不允许) */
+        relay_clear(r, BSP_RELAY_O2_IO);
         triggered = true;
     }
 
@@ -192,13 +196,15 @@ bool interlock_can_start_open_o2(const AppData_t *d)
 bool interlock_can_start_fogging(const AppData_t *d)
 {
     if (relay_is_on(d->control.relay_status, BSP_RELAY_ZIY_IO)) return false;
-    if (d->control.switch_status & SW_BIT_OPEN_O2) return false;
+    /* v4.1 Codex Block 3: 任何 O2 阀活动 (手动/自动/外部) 都禁雾化, 不只是手动 SW_BIT_OPEN_O2 */
+    if (relay_is_on(d->control.relay_status, BSP_RELAY_O2_IO)) return false;
     return true;
 }
 
 bool interlock_can_start_uv(const AppData_t *d)
 {
-    if (d->control.switch_status & SW_BIT_OPEN_O2) return false;
+    /* v4.1 Codex Block 3: 任何 O2 阀活动都禁 UV (氧气 + UV 危险) */
+    if (relay_is_on(d->control.relay_status, BSP_RELAY_O2_IO)) return false;
     if (relay_is_on(d->control.relay_status, BSP_RELAY_WH_IO)) return false;
     return true;
 }
@@ -214,10 +220,9 @@ bool interlock_can_start_cooling(const AppData_t *d)
 {
     if (relay_is_on(d->control.relay_status, BSP_RELAY_PTC_IO)) return false;
     if (relay_is_on(d->control.relay_status, BSP_RELAY_JIARE_IO)) return false;
-    if (d->control.switch_status & SW_BIT_OPEN_O2) {
-        bool outer_on = !(d->control.switch_status & SW_BIT_INNER_CYCLE);
-        bool fresh_on = (d->control.switch_status & SW_BIT_FRESH_AIR) != 0;
-        return outer_on && fresh_on;
-    }
+    /* v4.1 Codex Concern D: 简化为直接禁制冷
+     * v4 中 OPEN_O2 时 Rule 4 强制清 SW_BIT_FRESH_AIR, 原 outer_on && fresh_on 永远 false,
+     * 改成直接 return false 让语义清晰. */
+    if (d->control.switch_status & SW_BIT_OPEN_O2) return false;
     return true;
 }

@@ -266,13 +266,21 @@ static void ControlTask(void *arg)
         /* === Stage 3 (2026-05-05): PTC 风机三方 max 仲裁 ===
          * 替代 temp_control 直接 80% + fresh_air 直接 100% + pwm_set_fan_speed 三处独立写法.
          * 三方期望统一进 max3, 写到 PE6+PE9 PTC 风机:
-         *   safety_min: HEATING 时 80%, 否则 0% (来自 temp_state)
+         *   safety_min: PTC 加热 relay 实际开时 80%, 否则 0% (基于 relay_status, v4.1 改)
          *   fresh_duty: FRESH_AIR active 时 100%, 否则 0%
          *   user_duty:  fan_speed_actual 查表 (0/30/60/100)
-         * 详见 pwm_set_ptc_arbiter 注释中的 8 种场景验证矩阵. */
+         * 详见 pwm_set_ptc_arbiter 注释中的 8 种场景验证矩阵.
+         *
+         * Stage 8 redo v4.1 (2026-05-07) Codex Block 1 修复:
+         * 原: safety_min = (temp_state == HEATING) ? 80 : 0
+         * 改: safety_min = (relay_status & PTC) ? 80 : 0
+         * 原因: temp_state 跟 relay_status 之间有 1 拍同步延迟. 进入 OPEN_O2 当拍,
+         * Rule 4 清掉了 PTC relay bit, 但 temp_state 仍可能保持 HEATING (要等下一轮
+         * temp_control_update 才更新到 IDLE), 导致 PTC 风机 PWM 误开 80%.
+         * 改成基于 interlock 后的 relay 实际状态, 避免同步窗口风险, 跟"纯氧隔离"语义一致. */
         {
             uint8_t safety_min =
-                (d->control.temp_state == TEMP_STATE_HEATING) ? 80 : 0;
+                (d->control.relay_status & (1U << BSP_RELAY_PTC_IO)) ? 80 : 0;
             uint8_t fresh_duty =
                 (d->control.switch_status & SW_BIT_FRESH_AIR) ? 100 : 0;
             uint8_t fan = d->control.fan_speed_actual;
