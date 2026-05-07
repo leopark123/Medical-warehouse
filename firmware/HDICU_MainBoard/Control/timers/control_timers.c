@@ -33,8 +33,12 @@ void control_timers_tick_1s(AppData_t *d)
         }
     }
 
-    /* O2 accumulation: increment while open O2 is active */
-    if (d->setpoint.open_o2 && d->control.o2_accumulated < 0xFFFF) {
+    /* O2 accumulation — Stage 8 redo v4 (2026-05-07):
+     * 累加条件从 "setpoint.open_o2=1" 改成 "BSP_RELAY_O2_IO 阀实际开".
+     * 这样手动开放供氧 / 编码器调 target_o2 触发自动闭环 / 外部 PD8/PB6 demand
+     * 任何让 O2 阀打开的路径都会累加, 反映"实际供氧时长". */
+    if ((d->control.relay_status & (1U << BSP_RELAY_O2_IO)) &&
+        d->control.o2_accumulated < 0xFFFF) {
         d->control.o2_accumulated++;
     }
 }

@@ -216,7 +216,9 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
             }
             break;
         case 0x04: if (value <= 3) d->setpoint.fan_speed = (uint8_t)value; break;
-        case 0x05: if (value >= 1 && value <= 3) d->setpoint.nursing_level = (uint8_t)value; break;
+        case 0x05: /* Stage 8 redo v4: nursing 范围 0~4 (5 档) */
+                   if (value <= 4) d->setpoint.nursing_level = (uint8_t)value;
+                   break;
         case 0x06:
             /* Stage 4: CO2 阈值 setpoint, 0~5000 ppm.
              * Stage 8 注: target_co2 仍是 placeholder, AlarmTask CO2 报警仍用固定 5000ppm,
@@ -248,8 +250,8 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
         /* --- Single click actions --- */
         if (action == 0x01) {
             switch (key_id) {
-            case 0x01: /* 护理等级灯: cycle 1→2→3→1 */
-                d->setpoint.nursing_level = (d->setpoint.nursing_level % 3) + 1;
+            case 0x01: /* 护理等级灯: Stage 8 redo v4 — 5 档循环 0→1→2→3→4→0 */
+                d->setpoint.nursing_level = (uint8_t)((d->setpoint.nursing_level + 1) % 5);
                 break;
             case 0x02: /* 照明灯 — toggle bit1, Stage 8 加 α 软互斥 */
                 d->setpoint.light_ctrl ^= 0x02;
@@ -337,8 +339,14 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
                 }
                 break;
             case 0x07: /* 内/外循环 — 长按2秒翻转 (防误触保护)
-                        * Stage 8 redo v3 (2026-05-07) 修问题 2: 从单击改长按, 防 PC7 上电误触发. */
-                d->setpoint.inner_cycle = d->setpoint.inner_cycle ? 0 : 1;
+                        * Stage 8 redo v3 (2026-05-07): 从单击改长按, 防 PC7 上电误触发.
+                        * Stage 8 redo v4 (2026-05-07): 互斥 — 开内循环时强制关新风. */
+                if (d->setpoint.inner_cycle) {
+                    d->setpoint.inner_cycle = 0;
+                } else {
+                    d->setpoint.inner_cycle = 1;
+                    d->setpoint.fresh_air   = 0;   /* v4: 互斥, LEDA7 PC15 灭 */
+                }
                 break;
             case 0x0A: /* 编码器长按 = LIVE 页 → 供氧累计清零 (b 方案保留, frozen spec 4.4) */
             {

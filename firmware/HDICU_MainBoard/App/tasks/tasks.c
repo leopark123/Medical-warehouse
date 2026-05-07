@@ -184,7 +184,14 @@ static void ControlTask(void *arg)
 
         /* Update nursing level and fan speed */
         d->control.nursing_level_actual = d->setpoint.nursing_level;
-        d->control.fan_speed_actual = d->setpoint.fan_speed;
+        /* Stage 8 redo v4 (2026-05-07): OPEN_O2 时强制 fan_speed_actual=0,
+         * 让 PTC 风机 PWM (pwm_set_ptc_arbiter user_duty) + 屏幕板 LED8/9/10/LEDA8
+         * 全部跟随关掉. setpoint.fan_speed 保留, 退出 OPEN_O2 后用户原档位恢复. */
+        if (d->control.switch_status & SW_BIT_OPEN_O2) {
+            d->control.fan_speed_actual = 0;
+        } else {
+            d->control.fan_speed_actual = d->setpoint.fan_speed;
+        }
         d->control.light_status = d->setpoint.light_ctrl;
 
         /* 1-second sub-tick for timers (200ms * 5 = 1s) */
@@ -194,13 +201,26 @@ static void ControlTask(void *arg)
             control_timers_tick_1s(d);
         }
 
-        /* Apply nursing level LEDs (PB1=level1, PB0=level2, PC5=level3) */
-        HAL_GPIO_WritePin(BSP_LED_HULI1_PORT, BSP_LED_HULI1_PIN,
-                          (d->control.nursing_level_actual == 1) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(BSP_LED_HULI2_PORT, BSP_LED_HULI2_PIN,
-                          (d->control.nursing_level_actual == 2) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(BSP_LED_HULI3_PORT, BSP_LED_HULI3_PIN,
-                          (d->control.nursing_level_actual == 3) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        /* Stage 8 redo v4 (2026-05-07): 护理 5 档 (0~4) + 物理灯映射
+         * BSP 命名 vs 物理排列: HULI1=PB1, HULI2=PB0, HULI3=PC5 (BSP 1/2 跟物理排列对调)
+         * 用户给的物理映射 (按档位):
+         *   档 0: 全灭
+         *   档 1: PB0 (= BSP_LED_HULI2)
+         *   档 2: PB1 (= BSP_LED_HULI1)
+         *   档 3: PC5 (= BSP_LED_HULI3)
+         *   档 4: PB1 + PC5 同时亮 (= HULI1 + HULI3) */
+        {
+            uint8_t lv = d->control.nursing_level_actual;
+            /* PB1 (BSP_LED_HULI1): 档 2 或 档 4 亮 */
+            HAL_GPIO_WritePin(BSP_LED_HULI1_PORT, BSP_LED_HULI1_PIN,
+                              (lv == 2 || lv == 4) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            /* PB0 (BSP_LED_HULI2): 档 1 亮 */
+            HAL_GPIO_WritePin(BSP_LED_HULI2_PORT, BSP_LED_HULI2_PIN,
+                              (lv == 1) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+            /* PC5 (BSP_LED_HULI3): 档 3 或 档 4 亮 */
+            HAL_GPIO_WritePin(BSP_LED_HULI3_PORT, BSP_LED_HULI3_PIN,
+                              (lv == 3 || lv == 4) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        }
 
         /* Timer expiry beep: countdown 200ms ticks for 3s beep duration.
          * Actual PB3 driving is done by AlarmTask (single owner of buzzer GPIO).

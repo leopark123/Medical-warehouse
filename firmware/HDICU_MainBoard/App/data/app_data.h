@@ -9,7 +9,8 @@
  *          - Humidity: x10 (800 = 80.0%), range 300~900
  *          - O2 concentration: x10 (210 = 21.0%), range 210~1000
  *          - CO2: raw ppm, range 0~5000
- *          - Nursing level: 1~3 (NOT 1~4)
+ *          - Nursing level: 0~4 (5 档, Stage 8 redo v4 — was 1~3)
+ *            档 0 全灭, 档 1 PB0, 档 2 PB1, 档 3 PC5, 档 4 PB1+PC5
  */
 
 #ifndef APP_DATA_H
@@ -56,7 +57,7 @@ typedef struct {
     uint16_t fog_time;          /* seconds, 0~3600. 0=off */
     uint16_t disinfect_time;    /* seconds, 0~3600. 0=off */
     uint8_t  fan_speed;         /* 0=off, 1=low, 2=mid, 3=high */
-    uint8_t  nursing_level;     /* 1~3 (frozen, NOT 1~4) */
+    uint8_t  nursing_level;     /* Stage 8 redo v4: 0~4 (5 档), default = 1 */
     uint8_t  inner_cycle;       /* 0=off, 1=on */
     uint8_t  fresh_air;         /* 0=off, 1=on */
     uint8_t  open_o2;           /* 0=off, 1=on */

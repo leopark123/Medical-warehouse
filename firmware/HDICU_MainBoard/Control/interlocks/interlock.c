@@ -84,39 +84,41 @@ bool interlock_apply(AppData_t *d)
     }
 
     /* ------------------------------------------------------------------- */
-    /* Rule 4: Open O2 mode — most complex interlock set                   */
+    /* Rule 4: Open O2 mode — "纯氧隔离模式" (Stage 8 redo v4, 2026-05-07)  */
+    /* 用户需求: 进入开放供氧时只开 O2 阀 + 计时, 其他全部关 (风机/制冷/   */
+    /* 除湿/加湿/新风都关), 适合短时间紧急高浓度供氧.                       */
     /* Only runs if open_o2 survived Rule 5 above.                         */
     /* ------------------------------------------------------------------- */
     if (d->control.switch_status & SW_BIT_OPEN_O2) {
-        /* O2 valve: ON */
+        /* O2 valve: ON (核心动作) */
         relay_set(r, BSP_RELAY_O2_IO);
 
-        /* Inner cycle: FORBIDDEN — force off */
+        /* 空气循环: 内/外/新风全关 (v4 改: 不再强制开新风)
+         * 屏幕板 LEDA6 (PA0 内循环) + LEDA7 (PC15 新风) 跟着灭. */
         d->control.switch_status &= ~SW_BIT_INNER_CYCLE;
-        /* CN32 FAI solenoid valve GPIO not yet defined in BSP. inner_cycle/fresh_air
-         * currently only sets software status bits (switch_status). Hardware output will
-         * be added after hardware engineer confirms CN32 GPIO pin. */
+        d->control.switch_status &= ~SW_BIT_FRESH_AIR;     /* v4 关键改动 */
 
-        /* Outer cycle: FORCED ON (= inner off, done above) */
-        /* Fresh air: FORCED ON */
-        d->control.switch_status |= SW_BIT_FRESH_AIR;
-        /* CN32 FAI solenoid valve GPIO not yet defined in BSP. inner_cycle/fresh_air
-         * currently only sets software status bits (switch_status). Hardware output will
-         * be added after hardware engineer confirms CN32 GPIO pin. */
-
-        /* Heating: FORBIDDEN */
+        /* 加热: FORBIDDEN */
         relay_clear(r, BSP_RELAY_PTC_IO);
         relay_clear(r, BSP_RELAY_JIARE_IO);
 
-        /* Fogging: FORBIDDEN (if somehow still on) */
+        /* 雾化: FORBIDDEN (oxygen + aerosol = 易燃) */
         relay_clear(r, BSP_RELAY_WH_IO);
         d->control.fog_remaining = 0;
 
-        /* UV disinfect: FORBIDDEN */
+        /* 紫外消毒: FORBIDDEN (oxygen + UV = 危险) */
         relay_clear(r, BSP_RELAY_ZIY_IO);
         d->control.disinfect_remaining = 0;
 
-        /* Cooling: CONDITIONAL — allowed because we just forced outer+fresh on */
+        /* v4 新增: 制冷/除湿/加湿/外风机全关.
+         * 压缩机关 → 除湿+制冷停 → tasks.c line 271-274 中 PE5/PC13 内风机自动跟随关.
+         * PTC 风机 (PE6+PE9) 由 pwm_set_ptc_arbiter 仲裁:
+         *   safety_min=0 (加热已关) + fresh_duty=0 (FRESH_AIR 已清) +
+         *   user_duty=0 (tasks.c v4 改让 fan_speed_actual=0)
+         *   → max3(0,0,0)=0 → PTC 风机 PWM = 0 自动停转. */
+        relay_clear(r, BSP_RELAY_YASUO_IO);     /* 压缩机 (= 制冷+除湿) */
+        relay_clear(r, BSP_RELAY_FENGJI_IO);    /* 空调外风机 */
+        relay_clear(r, BSP_RELAY_JIASHI_IO);    /* 加湿器 */
 
         triggered = true;
     }
