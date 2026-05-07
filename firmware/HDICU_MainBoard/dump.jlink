@@ -1,0 +1,11 @@
+// JLink Commander script — 备份主板当前固件
+// 用法:
+//   JLink -device STM32F103VE -if SWD -speed 4000 -autoconnect 1 -CommanderScript dump.jlink
+//
+// 输出: backup_main.bin (整片 512KB Flash)
+// 建议使用前手动 rename 加日期, 例如 backup_main_20260501.bin
+
+r
+h
+savebin backup_main.bin 0x08000000 0x80000
+q

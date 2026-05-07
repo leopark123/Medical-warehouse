@@ -1,0 +1,11 @@
+// JLink Commander script — 主板烧录
+// 配合 flash_main.bat 使用
+//   JLink -device STM32F103VE -if SWD -speed 4000 -autoconnect 1 -CommanderScript flash.jlink
+
+r
+h
+loadbin build/firmware.bin 0x08000000
+verifybin build/firmware.bin 0x08000000
+r
+g
+q
