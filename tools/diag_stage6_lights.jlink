@@ -1,0 +1,51 @@
+// Diagnose lights "always on" issue on Stage 6
+// Read AFIO_MAPR, GPIOE_CRH, TIM1 BDTR/CCER, AppData state
+
+si SWD
+speed 4000
+device STM32F103VE
+connect
+
+// AFIO_MAPR (0x40010004) - check TIM1_REMAP bits 6:7
+mem32 0x40010004 1
+
+// GPIOE_CRH (0x40011804) - check PE10/11/12/13/9 mode
+// CRH covers PE8-PE15, each 4 bits
+//   PE8  = bits[3:0]    Reset = 0x4 (input floating)
+//   PE9  = bits[7:4]    Stage 6 expects 0xB (AF PP 50MHz)
+//   PE10 = bits[11:8]   Should be 0x3 (Output PP 50MHz)
+//   PE11 = bits[15:12]  Should be 0x3
+//   PE12 = bits[19:16]  Should be 0x3
+//   PE13 = bits[23:20]  Should be 0x3
+//   PE14 = bits[27:24]
+//   PE15 = bits[31:28]
+mem32 0x40011804 1
+
+// GPIOE ODR (0x4001180C) - current output values
+mem32 0x4001180C 1
+
+// TIM1 BDTR (0x40012C44) - MOE bit (bit 15)
+mem32 0x40012C44 1
+
+// TIM1 CCER (0x40012C20) - CC1E/CC1NE/CC2E/CC2NE/CC3E/CC3NE bits
+mem32 0x40012C20 1
+
+// TIM1 CR1 (0x40012C00) - CEN bit (bit 0)
+mem32 0x40012C00 1
+
+// TIM1 CCR1/CCR2/CCR3/CCR4 (0x40012C34/38/3C/40)
+mem32 0x40012C34 4
+
+// AppData state for diagnosis:
+//   setpoint.target_temp @ 0x2000008E (uint16)
+//   sensor.temperature_avg @ 0x20000078 (int16)
+//   control.temp_state @ 0x200000A0 (1 byte, enum)
+//   control.relay_status @ 0x200000AA (uint16)
+//   control.light_status @ 0x200000AC (uint8)
+//   control.switch_status @ 0x200000AD (uint8)
+//   control.fan_speed_actual @ 0x200000B0 (uint8)
+mem 0x2000008E 2
+mem 0x20000078 2
+mem 0x200000A0 14
+
+q

@@ -1,0 +1,15 @@
+// JLink dump fog/disinfect setpoint vs remaining (T4/T8 verification)
+// Steps: screen board enter SET_FOG, rotate +1 click (60s), then run this script
+
+si SWD
+speed 4000
+device STM32F103VE
+connect
+
+mem 0x20000096 2          // setpoint.fog_time           expect 0x003C, current bug = 0x0000
+mem 0x20000098 2          // setpoint.disinfect_time     same
+mem 0x200000B0 2          // control.fog_remaining       counting down from set value
+mem 0x200000B2 2          // control.disinfect_remaining same
+mem 0x200000B6 2          // control.relay_status        bit 8 = WH_IO/PB4
+
+q

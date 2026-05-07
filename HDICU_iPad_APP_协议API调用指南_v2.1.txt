@@ -1,0 +1,645 @@
+[0] HDICU iPad APP 协议 API 调用指南 v2.1
+含 C / Swift 示例代码 + 常见错误
+[1] 针对APP开发者 · 基于实际固件核验 · 2026-04-20
+[3] ⚠ 重要提醒(先看这里)
+[4] 本协议的 0x03 写参数是【整体状态写入】模型,不是【单字段增量更新】。
+[6] 不能发送形如 “只设置要改的那个字节,其余置 0” 的帧!!!
+[8] 错误示例(会被拒绝 + 关闭其他正在运行的功能):
+[9] AA 03 1E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 ... CC 55
+         ↑                                          ↑
+         其他全 0                             只设 light_ctrl = 0x01
+
+后果:
+  ① nursing_level = 0  → OOB 拒绝,返回 0x04 带 IPAD_ERR_NURSING_OOB (0x08)
+                         整帧作废,light 也不会被改!
+  ② 即便通过,其他字段 0 会:
+     - fog_time = 0     → 停止正在运行的雾化倒计时
+     - disinfect_time=0 → 停止消毒倒计时
+     - inner_cycle = 0  → 关闭内循环
+     - fresh_air   = 0  → 关闭新风
+     - open_o2     = 0  → 关闭开放供氧
+[11] 正确做法: APP 本地缓存完整状态,每次发 0x03 时把所有字段回填当前值,只改变要改的那一位。
+[13] 1. 协议概览
+[14] 1.1 物理层
+[15] 1.2 帧格式
+[16] 发送 (APP → 主控):  AA [CMD] [LEN] [DATA...] [CS] 55
+应答 (主控 → APP):  AA [CMD] [LEN] [DATA...] [CS] 55
+
+- 帧头:   固定 0xAA (1 字节)
+- 命令码: CMD (1 字节)
+- 长度:   LEN (1 字节) = DATA 部分字节数
+- 数据:   DATA (LEN 字节)
+- 校验:   CS (1 字节) = (0xAA + CMD + LEN + 全部 DATA 字节) & 0xFF
+          ⚠ 校验和 INCLUDES 帧头 0xAA (屏幕协议不同,不要混淆)
+- 帧尾:   固定 0x55 (1 字节)
+[17] 1.3 字节序
+[18] 所有多字节数值均为【大端】(Big-Endian,高字节先)
+[19] 例: target_temp = 250 (25.0℃ x10)  → 字节序: 0x00 0xFA
+     target_humidity = 500 (50.0%)   → 字节序: 0x01 0xF4
+     target_o2 = 210 (21.0%)         → 字节序: 0x00 0xD2
+     target_co2 = 1000 (ppm)         → 字节序: 0x03 0xE8
+[20] 1.4 编码规则(x10 精度)
+[21] 1.5 命令表
+[23] 2. 正确使用模式
+[24] 2.1 APP 启动流程
+[25] ┌─────────────────────────────────────────────────┐
+│ 1. 建立串口连接 (115200/8N1)                      │
+├─────────────────────────────────────────────────┤
+│ 2. 发 0x01 查询 (LEN=0)                           │
+│    → 等待 0x02 回复 (46 字节)                     │
+│    → 把所有字段解析到 APP 本地缓存                │
+├─────────────────────────────────────────────────┤
+│ 3. 发 0x0A 读限值 (LEN=0)                         │
+│    → 等待 0x0A 回复 (18 字节)                     │
+│    → 保存到本地,后续 UI 限值用                    │
+├─────────────────────────────────────────────────┤
+│ 4. 启动 500ms 轮询:                               │
+│    - 每 500ms 发 0x05 → 获取实时数据 0x06 (20B)    │
+│    - 实时数据用于更新 UI(温湿 O2 / 告警/ 定时)   │
+├─────────────────────────────────────────────────┤
+│ 5. 用户在 UI 操作时:                              │
+│    a. 更新 APP 本地缓存                           │
+│    b. 整帧发送 0x03 (30 字节,含所有字段)          │
+│    c. 等待 0x04 ACK → 检查是否 OOB                │
+│    d. 如果 OOB → 回滚本地缓存 + 提示用户          │
+└─────────────────────────────────────────────────┘
+[26] 2.2 超时与重试
+[28] 3. 0x03 写参数详细说明(重点)
+[29] 3.1 数据区字节映射(30 字节)
+[30] 3.2 cancel_flags 机制(重要)
+[31] 含义: data[18]-data[21] 是 4 个字段的“是否应用”开关,仅对 temp/humid/o2/co2 有效。
+[34] ⚠ 注意: 名字叫 “cancel” 但语义是反的 —— 值 1 = 接受, 值 0 = 取消。以代码为准。
+[36] 其他字段(fog / disinfect / fan / nursing / cycle / fresh / open_o2 / light)没有 cancel 机制,每次发帧都会无条件写入。
+[37] 3.3 主控返回的 0x04 ACK (2 字节)
+[38] 错误码详细:
+[40] 4. C 代码示例(嵌入式/PC 端 C)
+[41] 4.1 数据结构
+[42] #include <stdint.h>
+#include <string.h>
+
+typedef struct {
+    uint16_t target_temp;        /* x10, 100-400 */
+    uint16_t target_humidity;    /* x10, 300-900 */
+    uint16_t target_o2;          /* x10, 210-1000 */
+    uint16_t target_co2;         /* ppm, 0-5000 */
+    uint16_t fog_time;           /* seconds, 0-3600 */
+    uint16_t disinfect_time;     /* seconds, 0-3600 */
+    uint8_t  fan_speed;          /* 0-3 */
+    uint8_t  nursing_level;      /* 1-3, MUST NOT be 0! */
+    uint8_t  inner_cycle;        /* 0/1 */
+    uint8_t  fresh_air;          /* 0/1 */
+    uint8_t  open_o2;            /* 0/1 */
+    uint8_t  light_ctrl;         /* bit0=check, bit1=ambient, bit2=blue, bit3=red */
+    int16_t  cal_temp;           /* x10, ±500 */
+    int16_t  cal_humid;
+    int16_t  cal_o2;
+    int16_t  cal_co2;            /* ppm, ±5000 */
+} CabinParams_t;
+
+/* APP 本地缓存: 启动时通过 0x01 同步, 每次写入 0x03 前从这里取值 */
+static CabinParams_t g_local_cache;
+[43] 4.2 构建 0x03 写入帧
+[44] /* 辅助: 大端写入 u16 */
+static void put_u16_be(uint8_t *dst, uint16_t v) {
+    dst[0] = (uint8_t)(v >> 8);
+    dst[1] = (uint8_t)(v & 0xFF);
+}
+
+/* 构建 0x03 帧, 返回总长度 (固定 35 字节) */
+uint16_t build_write_params_frame(uint8_t *frame_out) {
+    uint8_t data[30];
+    memset(data, 0, 30);
+
+    put_u16_be(&data[0],  g_local_cache.target_temp);
+    put_u16_be(&data[2],  g_local_cache.target_humidity);
+    put_u16_be(&data[4],  g_local_cache.target_o2);
+    put_u16_be(&data[6],  g_local_cache.target_co2);
+    put_u16_be(&data[8],  g_local_cache.fog_time);
+    put_u16_be(&data[10], g_local_cache.disinfect_time);
+    data[12] = g_local_cache.fan_speed;
+    data[13] = g_local_cache.nursing_level;   /* !! 不能是 0 */
+    data[14] = g_local_cache.inner_cycle;
+    data[15] = g_local_cache.fresh_air;
+    data[16] = g_local_cache.open_o2;
+    data[17] = g_local_cache.light_ctrl;
+    data[18] = 1;   /* cancel_flags: 1 = 接受更新 */
+    data[19] = 1;
+    data[20] = 1;
+    data[21] = 1;
+    put_u16_be(&data[22], (uint16_t)g_local_cache.cal_temp);
+    put_u16_be(&data[24], (uint16_t)g_local_cache.cal_humid);
+    put_u16_be(&data[26], (uint16_t)g_local_cache.cal_o2);
+    put_u16_be(&data[28], (uint16_t)g_local_cache.cal_co2);
+
+    /* 帧头 + 命令 + 长度 */
+    frame_out[0] = 0xAA;
+    frame_out[1] = 0x03;
+    frame_out[2] = 30;
+    memcpy(&frame_out[3], data, 30);
+
+    /* 校验: AA + CMD + LEN + 所有 DATA */
+    uint32_t cs = 0xAA + 0x03 + 30;
+    for (int i = 0; i < 30; i++) cs += data[i];
+    frame_out[33] = (uint8_t)(cs & 0xFF);
+    frame_out[34] = 0x55;
+
+    return 35;
+}
+[45] 4.3 用户 UI 事件处理示例
+[46] /* 用户点击“检查灯”按钮 → 翻转 bit0 */
+void on_user_tap_inspection_light(void) {
+    g_local_cache.light_ctrl ^= 0x01;   /* 翻转 bit0 */
+
+    uint8_t frame[35];
+    uint16_t len = build_write_params_frame(frame);
+    uart_send(frame, len);
+
+    /* 上层超时逻辑:500ms 内等待 0x04 ACK */
+    wait_for_ack_0x04();
+}
+
+/* 用户通过 UI 滚动条调节温度目标 */
+void on_user_set_target_temp(float temp_celsius) {
+    uint16_t new_temp = (uint16_t)(temp_celsius * 10.0f + 0.5f);
+
+    /* 预检查:APP 侧也做一次 OOB, 避免来回 */
+    if (new_temp < 100 || new_temp > 400) {
+        show_ui_error("温度设定需在 10.0-40.0℃ 之间");
+        return;
+    }
+
+    g_local_cache.target_temp = new_temp;
+
+    uint8_t frame[35];
+    uint16_t len = build_write_params_frame(frame);
+    uart_send(frame, len);
+}
+[47] 4.4 处理 0x04 ACK
+[48] typedef enum {
+    ACK_OK = 0,
+    ACK_OOB,
+    ACK_CMD_ERR,
+    ACK_TIMEOUT
+} AckResult_t;
+
+AckResult_t handle_0x04_ack(const uint8_t *data, uint8_t len) {
+    if (len != 2) return ACK_CMD_ERR;
+
+    uint8_t result = data[0];
+    uint8_t err    = data[1];
+
+    if (result == 0x00) {
+        return ACK_OK;
+    } else if (result == 0x01) {
+        /* OOB, 根据 err 给用户提示 */
+        const char *msg;
+        switch (err) {
+        case 0x01: msg = "温度超出范围"; break;
+        case 0x02: msg = "湿度超出范围"; break;
+        case 0x03: msg = "O2 超出范围"; break;
+        case 0x04: msg = "CO2 超出范围"; break;
+        case 0x05: msg = "雾化时长超限"; break;
+        case 0x06: msg = "消毒时长超限"; break;
+        case 0x07: msg = "风速值无效(必须 0-3)"; break;
+        case 0x08: msg = "护理等级等开关参数无效"; break;
+        case 0x09: msg = "校准值超范围"; break;
+        case 0x0A: msg = "出厂限值无效"; break;
+        default:   msg = "未知错误"; break;
+        }
+        show_ui_error(msg);
+        /* 回滚本地缓存 */
+        resync_from_device();
+        return ACK_OOB;
+    }
+    return ACK_CMD_ERR;
+}
+[49] 4.5 解析 0x02 响应(读参数)
+[50] /* 0x02 回复 46 字节, 用于启动时同步本地缓存 */
+void parse_0x02_params(const uint8_t *data, uint8_t len) {
+    if (len != 46) return;
+
+    g_local_cache.target_temp     = ((uint16_t)data[0] << 8) | data[1];
+    g_local_cache.target_humidity = ((uint16_t)data[2] << 8) | data[3];
+    g_local_cache.target_o2       = ((uint16_t)data[4] << 8) | data[5];
+    g_local_cache.target_co2      = ((uint16_t)data[6] << 8) | data[7];
+    g_local_cache.fog_time        = ((uint16_t)data[8] << 8) | data[9];
+    g_local_cache.disinfect_time  = ((uint16_t)data[10] << 8) | data[11];
+    g_local_cache.fan_speed       = data[12];
+    g_local_cache.nursing_level   = data[13];
+    g_local_cache.inner_cycle     = data[14];
+    g_local_cache.fresh_air       = data[15];
+    g_local_cache.open_o2         = data[16];
+    g_local_cache.light_ctrl      = data[17];
+    /* data[18-33] 其他预留字段跳过 */
+    /* data[34-37] cancel_flags (只读,APP 一般每次发都用 1) */
+    /* data[38-45] calibration */
+    g_local_cache.cal_temp  = (int16_t)(((uint16_t)data[38] << 8) | data[39]);
+    g_local_cache.cal_humid = (int16_t)(((uint16_t)data[40] << 8) | data[41]);
+    g_local_cache.cal_o2    = (int16_t)(((uint16_t)data[42] << 8) | data[43]);
+    g_local_cache.cal_co2   = (int16_t)(((uint16_t)data[44] << 8) | data[45]);
+}
+[52] 5. Swift 代码示例(iOS / iPad 端)
+[53] 5.1 数据模型
+[54] import Foundation
+
+struct CabinParams {
+    var targetTemp: UInt16 = 250       // x10, 100-400
+    var targetHumidity: UInt16 = 500   // x10, 300-900
+    var targetO2: UInt16 = 210         // x10, 210-1000
+    var targetCO2: UInt16 = 1000       // ppm, 0-5000
+    var fogTime: UInt16 = 0            // seconds, 0-3600
+    var disinfectTime: UInt16 = 0
+    var fanSpeed: UInt8 = 0            // 0-3
+    var nursingLevel: UInt8 = 2        // 1-3, 绝不能是 0
+    var innerCycle: UInt8 = 0
+    var freshAir: UInt8 = 0
+    var openO2: UInt8 = 0
+    var lightCtrl: UInt8 = 0           // bit0=检查 bit1=照明 bit2=蓝 bit3=红
+    var calTemp: Int16 = 0             // x10, ±500
+    var calHumid: Int16 = 0
+    var calO2: Int16 = 0
+    var calCO2: Int16 = 0               // ppm, ±5000
+}
+[55] 5.2 协议管理器
+[56] class CabinProtocol {
+    static let shared = CabinProtocol()
+
+    // APP 本地缓存的当前状态
+    var cache = CabinParams()
+
+    // 串口实例(这里假设你已有 SerialPort 抽象)
+    var uart: SerialPort
+
+    private init() {
+        self.uart = SerialPort.shared
+    }
+
+    // MARK: - 大端辅助
+
+    private static func putU16BE(_ data: inout [UInt8], _ offset: Int, _ value: UInt16) {
+        data[offset]     = UInt8(value >> 8)
+        data[offset + 1] = UInt8(value & 0xFF)
+    }
+
+    private static func putI16BE(_ data: inout [UInt8], _ offset: Int, _ value: Int16) {
+        putU16BE(&data, offset, UInt16(bitPattern: value))
+    }
+
+    private static func getU16BE(_ data: [UInt8], _ offset: Int) -> UInt16 {
+        return (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
+    }
+
+    // MARK: - 帧构建
+
+    /// 构建 0x03 写入帧 (35 字节)
+    func buildWriteParamsFrame() -> [UInt8] {
+        var data = [UInt8](repeating: 0, count: 30)
+
+        Self.putU16BE(&data, 0,  cache.targetTemp)
+        Self.putU16BE(&data, 2,  cache.targetHumidity)
+        Self.putU16BE(&data, 4,  cache.targetO2)
+        Self.putU16BE(&data, 6,  cache.targetCO2)
+        Self.putU16BE(&data, 8,  cache.fogTime)
+        Self.putU16BE(&data, 10, cache.disinfectTime)
+        data[12] = cache.fanSpeed
+        data[13] = cache.nursingLevel        // !! 永远是 1-3
+        data[14] = cache.innerCycle
+        data[15] = cache.freshAir
+        data[16] = cache.openO2
+        data[17] = cache.lightCtrl
+        data[18] = 1; data[19] = 1; data[20] = 1; data[21] = 1   // cancel_flags = 全接受
+        Self.putI16BE(&data, 22, cache.calTemp)
+        Self.putI16BE(&data, 24, cache.calHumid)
+        Self.putI16BE(&data, 26, cache.calO2)
+        Self.putI16BE(&data, 28, cache.calCO2)
+
+        var frame: [UInt8] = [0xAA, 0x03, 30]
+        frame.append(contentsOf: data)
+
+        // 校验: AA + CMD + LEN + 全部 DATA
+        var cs: UInt32 = 0xAA + 0x03 + 30
+        for byte in data { cs += UInt32(byte) }
+        frame.append(UInt8(cs & 0xFF))
+        frame.append(0x55)
+
+        return frame
+    }
+
+    // MARK: - 用户操作入口
+
+    /// 翻转检查灯
+    func toggleInspectionLight() {
+        cache.lightCtrl ^= 0x01
+        sendWriteAndWaitAck()
+    }
+
+    /// 设置护理等级 (1/2/3)
+    func setNursingLevel(_ level: UInt8) {
+        guard (1...3).contains(level) else {
+            showError("护理等级必须 1-3")
+            return
+        }
+        cache.nursingLevel = level
+        sendWriteAndWaitAck()
+    }
+
+    /// 设置目标温度 (℃)
+    func setTargetTemp(_ celsius: Float) {
+        let x10 = UInt16((celsius * 10.0).rounded())
+        guard (100...400).contains(x10) else {
+            showError("温度应在 10.0-40.0℃")
+            return
+        }
+        cache.targetTemp = x10
+        sendWriteAndWaitAck()
+    }
+
+    private func sendWriteAndWaitAck() {
+        let frame = buildWriteParamsFrame()
+        uart.send(frame)
+        // 上层用 async/await 或 Promise 等待 0x04 回复
+    }
+}
+[57] 5.3 启动时同步缓存
+[58] extension CabinProtocol {
+    /// 启动时发 0x01 同步本地缓存
+    func syncFromDevice() async throws {
+        // 发 0x01 查询
+        let cs: UInt8 = UInt8((UInt32(0xAA) + 0x01 + 0x00) & 0xFF)
+        let queryFrame: [UInt8] = [0xAA, 0x01, 0x00, cs, 0x55]
+        uart.send(queryFrame)
+
+        // 等待 0x02 回复 (46 字节)
+        let reply = try await waitForFrame(cmd: 0x02, expectedLen: 46, timeout: 1.0)
+        parseParams(reply)
+    }
+
+    private func parseParams(_ data: [UInt8]) {
+        cache.targetTemp     = Self.getU16BE(data, 0)
+        cache.targetHumidity = Self.getU16BE(data, 2)
+        cache.targetO2       = Self.getU16BE(data, 4)
+        cache.targetCO2      = Self.getU16BE(data, 6)
+        cache.fogTime        = Self.getU16BE(data, 8)
+        cache.disinfectTime  = Self.getU16BE(data, 10)
+        cache.fanSpeed       = data[12]
+        cache.nursingLevel   = data[13]
+        cache.innerCycle     = data[14]
+        cache.freshAir       = data[15]
+        cache.openO2         = data[16]
+        cache.lightCtrl      = data[17]
+        cache.calTemp        = Int16(bitPattern: Self.getU16BE(data, 38))
+        cache.calHumid       = Int16(bitPattern: Self.getU16BE(data, 40))
+        cache.calO2          = Int16(bitPattern: Self.getU16BE(data, 42))
+        cache.calCO2         = Int16(bitPattern: Self.getU16BE(data, 44))
+    }
+}
+[59] 5.4 ACK 处理
+[60] enum CabinError: Error {
+    case tempOOB, humidOOB, o2OOB, co2OOB
+    case fogOOB, disinfectOOB, fanOOB, nursingOOB
+    case calOOB, limitsInvalid
+    case cmdError, timeout, invalidLength
+
+    var userMessage: String {
+        switch self {
+        case .tempOOB:         return "温度超出范围"
+        case .humidOOB:        return "湿度超出范围"
+        case .o2OOB:           return "O2 超出范围"
+        case .co2OOB:          return "CO2 超出范围"
+        case .fogOOB:          return "雾化时长超限"
+        case .disinfectOOB:    return "消毒时长超限"
+        case .fanOOB:          return "风速值无效"
+        case .nursingOOB:      return "护理等级等开关参数无效(如 nursing=0)"
+        case .calOOB:          return "校准值超出 ±500"
+        case .limitsInvalid:   return "出厂限值无效(下限 >= 上限)"
+        case .cmdError:        return "命令错误"
+        case .timeout:         return "设备无应答"
+        case .invalidLength:   return "帧长异常"
+        }
+    }
+}
+
+func parseAck0x04(_ data: [UInt8]) throws {
+    guard data.count == 2 else { throw CabinError.invalidLength }
+
+    let result = data[0]
+    let errCode = data[1]
+
+    switch result {
+    case 0x00: return                      // 成功
+    case 0x01:
+        switch errCode {
+        case 0x01: throw CabinError.tempOOB
+        case 0x02: throw CabinError.humidOOB
+        case 0x03: throw CabinError.o2OOB
+        case 0x04: throw CabinError.co2OOB
+        case 0x05: throw CabinError.fogOOB
+        case 0x06: throw CabinError.disinfectOOB
+        case 0x07: throw CabinError.fanOOB
+        case 0x08: throw CabinError.nursingOOB
+        case 0x09: throw CabinError.calOOB
+        case 0x0A: throw CabinError.limitsInvalid
+        default:   throw CabinError.cmdError
+        }
+    default:
+        throw CabinError.cmdError
+    }
+}
+[62] 6. 常见错误对照
+[63] 6.1 错误 #1: 只设一位其余置 0
+[64] ❌ 错的:
+发: AA 03 1E 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 ... CC 55
+    (只把 data[17]=0x01 设检查灯, 其余全 0)
+
+结果:
+  - nursing_level=0 → 主控返回 0x04 带 IPAD_ERR_NURSING_OOB, 整帧作废
+  - 即便能过, fog_time=0 会停雾化, disinfect_time=0 停消毒
+
+✅ 对的:
+  1. 先发 0x01 查询当前状态
+  2. 收 0x02 后更新本地 cache (含 nursing=2 等当前值)
+  3. cache.light_ctrl |= 0x01
+  4. buildWriteParamsFrame() → 发送
+  5. 等 0x04 ACK
+[65] 6.2 错误 #2: 字节序搞反(小端)
+[66] ❌ 错的: target_temp=250 写成 FA 00
+✅ 对的: target_temp=250 写成 00 FA
+       (大端, 高字节在前)
+[67] 6.3 错误 #3: 校验和不含帧头
+[68] ❌ 错的: cs = (cmd + len + data) & 0xFF      (屏幕协议这么算)
+✅ 对的: cs = (0xAA + cmd + len + data) & 0xFF (iPad 协议包含 0xAA)
+
+注意: iPad 和屏幕协议的校验和规则不同,不要混淆!
+[69] 6.4 错误 #4: 校准值没用补码(负值)
+[70] 例: cal_temp = -25 (即 -2.5℃ 校准偏移)
+
+❌ 错的: 写成 FF 19 (负数直接取反加 1)
+✅ 对的: 写成 FF E7 (补码: -25 的 int16 补码 = 0xFFE7)
+
+Swift:  let bytes = UInt16(bitPattern: Int16(-25))  // 0xFFE7
+C:      int16_t v = -25; uint16_t u = (uint16_t)v;  // 自动变 0xFFE7
+[71] 6.5 错误 #5: cancel_flags 全 0 以为能“保护”温度不变
+[72] ❌ 误解: “cancel_flags 全 0 的话, 温度湿度也不会被改”
+✅ 真相:  cancel_flags 全 0 确实会跳过 temp/humid/o2/co2 更新
+           但 fog_time / fan / nursing / cycle / fresh / open_o2 / light
+           这些字段没有 cancel 机制, 还是会被写入!
+
+           如果要“只改 light, 其他完全不动”, 必须按当前值回填所有字段。
+[73] 6.6 错误 #6: 连续多次快速发 0x03
+[74] 场景: 用户在 UI 上连续滑动温度滑条, APP 每 50ms 发一次 0x03
+
+❌ 错的: 主控处理不过来, 队列溢出, 偶发丢帧
+
+✅ 对的: APP 端做 debounce
+           - 用户停止滑动 300ms 后才发
+           - 或限流: 最多每 200ms 一帧
+[75] 6.7 错误 #7: 忘了更新 cancel_flags 导致副作用
+[76] 场景: APP 内部有 “不更新温度” 的模式 (cancel_flags[0]=0)
+      用户切到另一个模式, 想恢复温度控制
+
+❌ 错的: 只改 UI 显示, 没改 cache.sendCancelFlags
+         下次发 0x03 时 cancel_flags[0] 还是 0, 温度更新被忽略
+
+✅ 对的: 状态切换时立即同步 cancel_flags 到 cache, 并发一次完整 0x03
+[78] 7. 速查表
+[79] 7.1 最小“翻转检查灯”完整帧(示例)
+[80] 假设本地 cache: temp=250, humid=500, o2=210, co2=1000, fan=1, nursing=2, 其他 0, 校准 0
+[81] 帧字节 (35 bytes):
+  AA 03 1E                                     ← 头 + 写参 + LEN=30
+  00 FA                                         ← target_temp=250
+  01 F4                                         ← target_humid=500
+  00 D2                                         ← target_o2=210
+  03 E8                                         ← target_co2=1000
+  00 00                                         ← fog_time=0
+  00 00                                         ← disinf_time=0
+  01                                            ← fan=1
+  02                                            ← nursing=2 (关键!!!)
+  00                                            ← cycle=0
+  00                                            ← fresh=0
+  00                                            ← open_o2=0
+  01                                            ← light_ctrl=0x01 (检查灯)
+  01 01 01 01                                   ← cancel_flags 全接受
+  00 00 00 00 00 00 00 00                       ← 4 个校准值=0
+  <CS>                                          ← 和校验
+  55                                            ← 帧尾
+
+CS 计算 (逐字节累加):
+  头+命令+长度:  0xAA + 0x03 + 0x1E = 0xCB
+  data[0..1]:    0x00 + 0xFA         (temp=250)
+  data[2..3]:    0x01 + 0xF4         (humid=500)
+  data[4..5]:    0x00 + 0xD2         (o2=210)
+  data[6..7]:    0x03 + 0xE8         (co2=1000)
+  data[8..11]:   0 (fog + disinf 全 0)
+  data[12]:      0x01                (fan=1)
+  data[13]:      0x02                (nursing=2)
+  data[14..16]:  0 (cycle+fresh+open_o2)
+  data[17]:      0x01                (light=0x01)
+  data[18..21]:  0x01+0x01+0x01+0x01 (cancel_flags 全 1)
+  data[22..29]:  0 (校准 8 字节全 0)
+
+  累加 = 0xCB + 948 decimal = 1151 = 0x47F
+  CS = 0x47F & 0xFF = 0x7F
+
+完整帧 (35 字节):
+  AA 03 1E 00 FA 01 F4 00 D2 03 E8 00 00 00 00 01 02 00 00 00 01 01 01 01 01 00 00 00 00 00 00 00 00 7F 55
+[82] 7.2 协议常见值速查
+[83] 7.3 协议帧快速验证工具
+[84] 用 SSCOM / putty / 任意串口助手,发送十六进制帧观察应答。
+[85] 主控在任何情况下都 NOT 主动推送 (都是应答模式), 若无应答请检查波特率/接线/校验和。
+
+=== TABLE 0 ===
+  R0: 参数 | 值
+  R1: 波特率 | 115200
+  R2: 数据位 | 8
+  R3: 校验位 | 无 (None)
+  R4: 停止位 | 1
+  R5: 流控 | 无
+
+=== TABLE 1 ===
+  R0: 字段 | 编码 | 示例 | 范围
+  R1: temp | x10, 单位 0.1℃ | 25.0℃ = 250 = 0x00FA | 100 ~ 400 (10.0 ~ 40.0℃)
+  R2: humidity | x10, 单位 0.1% | 50.0% = 500 = 0x01F4 | 300 ~ 900 (30 ~ 90%)
+  R3: o2 | x10, 单位 0.1% | 21.0% = 210 = 0x00D2 | 210 ~ 1000 (21 ~ 100%)
+  R4: co2 | 原始 ppm | 1000 ppm = 0x03E8 | 0 ~ 5000
+  R5: calibration (校准) | x10 或 ppm | -2.5℃ 校准 = -25 = 0xFFE7 | ±500 (±50℃/% 或 ±5000 ppm)
+
+=== TABLE 2 ===
+  R0: CMD | 方向 | 名称 | DATA | 应答
+  R1: 0x01 | APP→主控 | 读参数 | 0 | 0x02 (46 字节)
+  R2: 0x02 | 主控→APP | 参数回复 | 46 | —
+  R3: 0x03 | APP→主控 | 写参数 | 30 | 0x04 (2 字节)
+  R4: 0x04 | 主控→APP | 写应答 | 2 | —
+  R5: 0x05 | APP→主控 | 读实时数据 | 0 | 0x06 (20 字节)
+  R6: 0x06 | 主控→APP | 实时数据 | 20 | —
+  R7: 0x09 | APP→主控 | 写出厂限值 | 18 | 0x04 (2 字节)
+  R8: 0x0A | APP→主控 | 读出厂限值 | 0 | 0x0A (18 字节)
+  R9: 0x0A | 主控→APP | 限值回复 | 18 | —
+  R10: 0x0B | APP→主控 | 恢复出厂 | 0 | 0x04 (2 字节)
+  R11: 0xFF | 主控→APP | 异常应答 | 2 | —
+
+=== TABLE 3 ===
+  R0: 事件 | 超时阈值 | 行为
+  R1: 0x05 查询无应答 | 1 秒 | 显示“通讯延迟”
+  R2: 连续 3 秒无应答 | 3 秒 | 显示“设备断连”,标红
+  R3: 0x03 写无 0x04 应答 | 500ms | 重发 1 次; 再无则报错
+  R4: 0x09 写限值无应答 | 500ms | 重发 1 次
+
+=== TABLE 4 ===
+  R0: 字节 | 字段 | 类型 | 范围 / 含义 | cancel_flags 覆盖
+  R1: 0-1 | target_temp | u16 big-endian | 100-400 (10.0-40.0℃) | ✅ data[18]
+  R2: 2-3 | target_humidity | u16 big-endian | 300-900 | ✅ data[19]
+  R3: 4-5 | target_o2 | u16 big-endian | 210-1000 | ✅ data[20]
+  R4: 6-7 | target_co2 | u16 big-endian | 0-5000 ppm | ✅ data[21]
+  R5: 8-9 | fog_time | u16 big-endian | 0-3600 秒. ⚠ 0 = 停止定时器! | ❌ 无覆盖
+  R6: 10-11 | disinfect_time | u16 big-endian | 0-3600 秒. ⚠ 0 = 停止定时器! | ❌ 无覆盖
+  R7: 12 | fan_speed | u8 | 0-3 (0=关闭 1低 2中 3高) | ❌ 无覆盖
+  R8: 13 | nursing_level | u8 | 1-3 (⚠ 0 会触发 OOB 拒绝!) | ❌ 无覆盖
+  R9: 14 | inner_cycle | u8 | 0 / 1 | ❌ 无覆盖
+  R10: 15 | fresh_air | u8 | 0 / 1 | ❌ 无覆盖
+  R11: 16 | open_o2 | u8 | 0 / 1 | ❌ 无覆盖
+  R12: 17 | light_ctrl | u8 bitmask | bit0=检查灯 bit1=照明 bit2=蓝 bit3=红 | ❌ 无覆盖
+  R13: 18 | cancel_flags.temp | u8 | 1=更新 temp, 0=跳过 temp 更新 | —
+  R14: 19 | cancel_flags.humid | u8 | 1=更新 humid, 0=跳过 | —
+  R15: 20 | cancel_flags.o2 | u8 | 1=更新 o2, 0=跳过 | —
+  R16: 21 | cancel_flags.co2 | u8 | 1=更新 co2, 0=跳过 | —
+  R17: 22-23 | cal_temp | i16 big-endian x10 | ±500 (±50.0℃) | —
+  R18: 24-25 | cal_humid | i16 big-endian x10 | ±500 | —
+  R19: 26-27 | cal_o2 | i16 big-endian x10 | ±500 | —
+  R20: 28-29 | cal_co2 | i16 big-endian ppm | ±5000 | —
+
+=== TABLE 5 ===
+  R0: cancel_flags 值 | 行为
+  R1: 1 (非零) | 接受该字段更新 → 主控把帧中的 target 值写到 setpoint
+  R2: 0 | 跳过该字段 → 主控保留原来的 setpoint, OOB 检查也被跳过
+
+=== TABLE 6 ===
+  R0: byte | 含义 | 值
+  R1: 0 | 结果码 | 0x00=成功, 0x01=参数OOB, 0x02=命令错误
+  R2: 1 | 错误码(仅 OOB 时有效) | 见下表
+
+=== TABLE 7 ===
+  R0: 错误码 | 宏 | 含义
+  R1: 0x00 | IPAD_ERR_NONE | 无错误
+  R2: 0x01 | IPAD_ERR_TEMP_OOB | 温度超出 limits 范围
+  R3: 0x02 | IPAD_ERR_HUMID_OOB | 湿度超范围
+  R4: 0x03 | IPAD_ERR_O2_OOB | O2 超范围
+  R5: 0x04 | IPAD_ERR_CO2_OOB | CO2 超范围
+  R6: 0x05 | IPAD_ERR_FOG_OOB | 雾化时长超限
+  R7: 0x06 | IPAD_ERR_DISINFECT_OOB | 消毒时长超限
+  R8: 0x07 | IPAD_ERR_FAN_OOB | fan_speed > 3
+  R9: 0x08 | IPAD_ERR_NURSING_OOB | nursing=0 或 >3, cycle/fresh/open_o2>1, light>0x0F
+  R10: 0x09 | IPAD_ERR_CAL_OOB | 校准值超出 ±500 或 ±5000
+  R11: 0x0A | IPAD_ERR_LIMITS_INVALID | 0x09 写限值时 lower >= upper
+
+=== TABLE 8 ===
+  R0: 场景 | 设置字段 | 值
+  R1: 打开检查灯 | light_ctrl |= 0x01 | 
+  R2: 关闭检查灯 | light_ctrl &= ~0x01 | 
+  R3: 切换照明灯 | light_ctrl ^= 0x02 | 
+  R4: 红蓝光三态 | light_ctrl = 0x04(蓝) / 0x08(红) / 0(灭) | 
+  R5: 启动 30 分钟雾化 | fog_time = 1800 | 
+  R6: 停止雾化 | fog_time = 0 | 
+  R7: 开放供氧 ON | open_o2 = 1 | 
+  R8: 内循环 ON | inner_cycle = 1 | 
+  R9: 新风 ON | fresh_air = 1 | 
+  R10: 恢复出厂设置 | 发 0x0B (无 data) | 

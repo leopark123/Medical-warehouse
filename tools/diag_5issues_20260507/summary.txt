@@ -1,0 +1,55 @@
+﻿HDICU 5-Issue Joint Diagnostic Summary
+Generated: 2026-05-07 16:26:29
+
+Field                           T0 baseline           T1 KEY7 #1            T2 KEY7 #2            T3 KEY5 long          T4 +30s               T5 KEY1 x5            
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+sensor.temperature[2]_x10        -3071 (0xF401)          256 (0x0100)            0 (0x0000)         4864 (0x1300)         3840 (0x0F00)          210 (0x00D2)       
+sensor.temperature_avg_x10       -6141 (0xE803)            0 (0x0000)        -9200 (0xDC10)         4096 (0x1000)         4096 (0x1000)            3 (0x0003)       
+sensor.o2_percent                16 (0x10)              0 (0x00)             39 (0x27)              0 (0x00)              0 (0x00)             64 (0x40)            
+sensor.o2_raw_x10                43757 (0xAAED)            0 (0x0000)         5903 (0x170F)            0 (0x0000)            0 (0x0000)           16 (0x0010)       
+sensor.o2_valid                  23 (0x17)            250 (0xFA)              0 (0x00)            210 (0xD2)            210 (0xD2)              0 (0x00)            
+setpoint.target_temp_x10             1 (0x0001)            0 (0x0000)            0 (0x0000)        39440 (0x9A10)        31760 (0x7C10)          978 (0x03D2)       
+setpoint.fog_time_sec            57092 (0xDF04)        48387 (0xBD03)            0 (0x0000)         7939 (0x1F03)        58882 (0xE602)            0 (0x0000)       
+setpoint.disinfect_time_sec          0 (0x0000)            0 (0x0000)        22528 (0x5800)            0 (0x0000)            0 (0x0000)        42496 (0xA600)       
+setpoint.fan_speed                0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+setpoint.nursing_level            1 (0x01)              1 (0x01)              1 (0x01)              1 (0x01)              1 (0x01)              3 (0x03)            
+setpoint.inner_cycle              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+setpoint.fresh_air                0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+setpoint.open_o2                  0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+setpoint.light_ctrl               0 (0x00)              0 (0x00)              0 (0x00)             16 (0x10)             20 (0x14)             16 (0x10)            
+control.temp_state                0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+control.fog_remaining_sec            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)       
+control.disinfect_remaining          0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)       
+control.o2_accumulated_sec       64000 (0xFA00)        64000 (0xFA00)        64000 (0xFA00)        64000 (0xFA00)        64000 (0xFA00)        64000 (0xFA00)       
+control.relay_status             62465 (0xF401)        62465 (0xF401)        62465 (0xF401)        62465 (0xF401)        62465 (0xF401)        62465 (0xF401)       
+control.light_status              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+control.switch_status           210 (0xD2)            210 (0xD2)            210 (0xD2)            210 (0xD2)            210 (0xD2)            210 (0xD2)            
+control.fan_speed_actual          0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+control.nursing_lvl_actual        0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)              0 (0x00)            
+alarm.alarm_flags                    0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)            0 (0x0000)       
+
+=== KEY DIAGNOSIS HINTS ===
+Issue 1 (KEY7 toggles supply-O2 time 0 <-> 8:32):
+  Look at row "control.o2_accumulated_sec" for T0 / T1 / T2.
+  - If toggles 0 <-> 512: confirms RAM aliasing (real bug, must fix in firmware).
+  - If stays constant: screen-side display bug (firmware OK, screen reads wrong byte).
+  Also compare "setpoint.fresh_air" - it should toggle 0->1->0.
+
+Issue 2 (Inner-cycle LED stuck ON):
+  Look at T0 "setpoint.inner_cycle".
+  - = 0 but LED stuck on -> hardware (PA0 short, wiring).
+  - = 1 -> software wrote it (KEY6 bounce or boot path).
+
+Issue 3 (O2 stuck at 61%):
+  Compare T0 vs T4 (30 seconds apart) on "sensor.o2_raw_x10".
+  - Same value -> O2 sensor not reporting; check "sensor.o2_valid" (should be 0).
+  - Different -> sensor live, display lag elsewhere.
+
+Issue 4 (Nursing 5 levels with double LED at 4):
+  T5 "setpoint.nursing_level" after 5 presses:
+  - 1->2->3->1->2 (ends at 2): firmware is 3-level (frozen spec); need new feature.
+
+Issue 5 (open-O2 starts at 25:30, not 0):
+  T3 "control.o2_accumulated_sec":
+  - = 0: only happens on pristine boot; if you saw 25:30, accumulator was carried.
+  - != 0 (e.g. 1530): need to clear o2_accumulated when open-O2 toggles 0->1.

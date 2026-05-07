@@ -1,0 +1,44 @@
+// JLink dump g_app_data key fields (Stage 8 redo, MD5 e217b7ce...)
+// g_app_data base: 0x20000070
+
+si SWD
+speed 4000
+device STM32F103VE
+connect
+
+// Sensor
+mem 0x20000074 2          // temperature[2] (PA4) int16 x10
+mem 0x20000078 2          // temperature_avg int16 x10
+mem 0x2000007E 1          // o2_percent uint8
+mem 0x20000080 2          // o2_raw uint16 x10
+mem 0x20000087 1          // o2_valid bool
+
+// Setpoint
+mem 0x2000008E 2          // target_temp uint16 x10
+mem 0x20000090 2          // target_humidity
+mem 0x20000092 2          // target_o2
+mem 0x20000096 2          // setpoint.fog_time uint16 sec
+mem 0x20000098 2          // setpoint.disinfect_time uint16 sec
+mem 0x2000009E 1          // open_o2 uint8
+mem 0x200000A0 1          // enable_temp_ctrl uint8
+mem 0x200000A1 1          // enable_humid_ctrl uint8
+mem 0x200000A2 1          // enable_o2_ctrl uint8
+
+// Control
+mem 0x200000A4 4          // temp_state enum 4B (0=IDLE,1=COOLING,2=HEATING)
+mem 0x200000A8 4          // humid_state
+mem 0x200000AC 4          // o2_state
+mem 0x200000B0 2          // fog_remaining uint16 sec
+mem 0x200000B2 2          // disinfect_remaining
+mem 0x200000B4 2          // o2_accumulated uint16 sec
+mem 0x200000B6 2          // relay_status uint16 bitmap (bit0=PE1, bit8=PB4)
+mem 0x200000B8 1          // light_status uint8
+mem 0x200000B9 1          // switch_status uint8
+mem 0x200000BC 1          // fan_speed_actual uint8
+
+// Alarm
+mem 0x200000C0 2          // alarm_flags uint16
+mem 0x200000C2 1          // buzzer_active bool
+mem 0x200000C3 1          // acknowledged bool
+
+q

@@ -63,3 +63,19 @@ C:/hdicu_dump/
 
 # 文档对齐修订清单 (历史文件)
 02_开发实现/文档对齐修订清单.md
+
+# === Stage 8 redo cleanup (2026-05-07) ===
+# 源码备份目录 (有 git tag 兜底, 不入 repo)
+firmware/_pre_*/
+
+# 04_ 整个测试资料目录 (用户私有 dump log + 测试照片 etc.)
+04_结构与测试资料/
+
+# handoff/ 目录 (内部交接, 不入 repo)
+handoff/
+
+# 工具脚本 (杂项, 不入 repo)
+md2docx_proposal.py
+pack_source.py
+schematic_text.txt
+v21_spec.txt

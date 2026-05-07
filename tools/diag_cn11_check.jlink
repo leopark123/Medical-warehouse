@@ -1,0 +1,23 @@
+// CN11 link diagnostic - read main board SCREEN UART RX counters
+// 5-second interval, two reads, no CPU halt
+// Firmware: Stage 5 (g_uart_rx_ok @ 0x2000062C)
+
+si SWD
+speed 4000
+device STM32F103VE
+connect
+
+// Read 1: rx_ok counters (5 channels: SCREEN/IPAD/CO2/O2/JFC103)
+mem32 0x2000062C 5
+
+// Read 1: rx_err counters
+mem32 0x20000618 5
+
+// Wait 5 seconds
+sleep 5000
+
+// Read 2
+mem32 0x2000062C 5
+mem32 0x20000618 5
+
+q
