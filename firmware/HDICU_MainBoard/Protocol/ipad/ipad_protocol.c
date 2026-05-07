@@ -497,7 +497,7 @@ static void handle_factory_reset(void)
     d->setpoint.fog_time        = 0;
     d->setpoint.disinfect_time  = 0;
     d->setpoint.fan_speed       = 0;
-    d->setpoint.nursing_level   = 1;
+    d->setpoint.nursing_level   = 0;    /* v4.3: factory reset 跟上电 init 一致 (全灭) */
     d->setpoint.inner_cycle     = 0;
     d->setpoint.fresh_air       = 0;
     d->setpoint.open_o2         = 0;

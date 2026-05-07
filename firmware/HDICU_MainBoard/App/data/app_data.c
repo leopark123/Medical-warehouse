@@ -30,13 +30,13 @@ void app_data_init(void)
     g_app_data.setpoint.target_o2       = 210;  /* 21.0% */
     g_app_data.setpoint.target_co2      = 1000; /* 1000 ppm */
     g_app_data.setpoint.fan_speed       = 0;
-    g_app_data.setpoint.nursing_level   = 1;
+    g_app_data.setpoint.nursing_level   = 0;    /* v4.3: 上电护理灯全灭 (was 1) */
     g_app_data.setpoint.inner_cycle     = 0;
     g_app_data.setpoint.fresh_air       = 0;
     g_app_data.setpoint.open_o2         = 0;
     g_app_data.setpoint.light_ctrl      = 0x00;
 
-    g_app_data.control.nursing_level_actual = 1;
+    g_app_data.control.nursing_level_actual = 0;    /* v4.3: 跟 setpoint 一致 */
 
     /* v2.1: 校准值默认0 (不校准) */
     g_app_data.calibration.temp  = 0;
