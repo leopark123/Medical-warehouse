@@ -144,19 +144,24 @@ bool interlock_apply(AppData_t *d)
     /* Rule 2: UV disinfect ↔ Open O2 mutually exclusive                   */
     /* 原规则: UV让步给手动开放供氧                                         */
     /* 扩展: 外部O2请求(PD8/PB6) 让步给UV消毒 — UV安全优先                  */
+    /* v4.2 (2026-05-07) Codex P1-1: UV 跟自动 O2 闭环 (SUPPLYING) 也要互斥, */
+    /* 之前 line 156 用 != SUPPLYING 反而豁免了自动闭环, 漏洞.               */
     /* ------------------------------------------------------------------- */
     if (relay_is_on(*r, BSP_RELAY_ZIY_IO) &&
         (d->control.switch_status & SW_BIT_OPEN_O2)) {
+        /* 手动 open_o2 → UV 让步 (跟原规则一致) */
         relay_clear(r, BSP_RELAY_ZIY_IO);
         d->control.disinfect_remaining = 0;
         triggered = true;
     }
-    if (relay_is_on(*r, BSP_RELAY_ZIY_IO) && external_o2_demand) {
-        /* UV运行中, 外部O2请求 让步 (UV优先) */
-        if (d->control.o2_state != O2_STATE_SUPPLYING &&
-            !(d->control.switch_status & SW_BIT_OPEN_O2)) {
-            relay_clear(r, BSP_RELAY_O2_IO);
+    if (relay_is_on(*r, BSP_RELAY_ZIY_IO) &&
+        (external_o2_demand || (d->control.o2_state == O2_STATE_SUPPLYING))) {
+        /* UV 运行中, 任何 O2 路径 (外部 demand / 自动闭环) 都让步, UV 优先.
+         * v4.2: 加上 SUPPLYING 路径; 自动闭环也清 enable_o2_ctrl 防下一拍重开. */
+        if (d->control.o2_state == O2_STATE_SUPPLYING) {
+            d->setpoint.enable_o2_ctrl = 0;
         }
+        relay_clear(r, BSP_RELAY_O2_IO);
         triggered = true;
     }
 

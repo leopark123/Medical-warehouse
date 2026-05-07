@@ -261,6 +261,12 @@ static void handle_write_params(const uint8_t *data, uint8_t len)
         d->setpoint.nursing_level  = nursing;
         d->setpoint.inner_cycle    = cycle;
         d->setpoint.fresh_air      = fresh;
+        /* v4.2 (2026-05-07) Codex P1-2: iPad 0x03 写参数也走双向互斥归一化,
+         * 防止 APP 一帧同时设 cycle=1 + fresh=1 绕过屏幕板 KEY6/KEY7 双向互斥.
+         * 优先 fresh_air (跟屏幕板 KEY7 单击 case 0x08 行为一致). */
+        if (d->setpoint.fresh_air && d->setpoint.inner_cycle) {
+            d->setpoint.inner_cycle = 0;
+        }
         d->setpoint.open_o2        = open_o2;
         /* Stage 8: light_ctrl 软互斥归一化 (Codex v1 问题 4) — 防止 iPad 直接写 0x0F 绕过屏幕互锁 */
         d->setpoint.light_ctrl     = light_ctrl_normalize(light);
