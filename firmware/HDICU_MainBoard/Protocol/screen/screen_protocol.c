@@ -291,8 +291,10 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
             case 0x06: /* 开放式供氧 — 单击忽略, 必须长按2秒才触发(防误触)
                         * 实际翻转逻辑在 action == 0x02 长按分支 */
                 break;
-            case 0x07: /* 内/外循环 toggle */
-                d->setpoint.inner_cycle = d->setpoint.inner_cycle ? 0 : 1;
+            case 0x07: /* 内/外循环 — 单击忽略, 必须长按2秒才触发(防误触)
+                        * Stage 8 redo v3 (2026-05-07) 修问题 2: 之前单击 toggle, 上电时
+                        * 屏幕板 PC7 浮空容易被识别为按下→inner_cycle 卡 1 内循环灯一直亮.
+                        * 改长按 2 秒触发, 跟 KEY5 开放供氧一致. 实际翻转在长按分支. */
                 break;
             case 0x08: /* 新风净化 toggle */
                 d->setpoint.fresh_air = d->setpoint.fresh_air ? 0 : 1;
@@ -324,8 +326,19 @@ static void dispatch_screen_command(uint8_t cmd, const uint8_t *data, uint8_t le
          * 删除 Stage 8 v3 的 action=0x05 + cancel_beep_until_tick 路径 (短鸣不再使用). */
         else if (action == 0x02) {
             switch (key_id) {
-            case 0x06: /* 开放式供氧 — 长按2秒翻转 (防误触保护) */
-                d->setpoint.open_o2 = d->setpoint.open_o2 ? 0 : 1;
+            case 0x06: /* 开放式供氧 — 长按2秒翻转 (防误触保护)
+                        * Stage 8 redo v3 (2026-05-07) 修问题 5: 0→1 边沿清 o2_accumulated,
+                        * 让供氧计时从 0 起步 (之前累计 25:30 不清, 用户希望按下重新计时). */
+                if (d->setpoint.open_o2) {
+                    d->setpoint.open_o2 = 0;
+                } else {
+                    d->setpoint.open_o2 = 1;
+                    d->control.o2_accumulated = 0;   /* 重新计时 */
+                }
+                break;
+            case 0x07: /* 内/外循环 — 长按2秒翻转 (防误触保护)
+                        * Stage 8 redo v3 (2026-05-07) 修问题 2: 从单击改长按, 防 PC7 上电误触发. */
+                d->setpoint.inner_cycle = d->setpoint.inner_cycle ? 0 : 1;
                 break;
             case 0x0A: /* 编码器长按 = LIVE 页 → 供氧累计清零 (b 方案保留, frozen spec 4.4) */
             {
