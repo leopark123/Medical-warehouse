@@ -1232,43 +1232,58 @@ static void LEDA_Init(void)
 
     /* All LEDA pins: push-pull output, 2MHz (nibble = 0x2) */
 
-    /* --- GPIOA: PA0[3:0], PA5[23:20], PA15 via CRH[31:28] --- */
+    /* --- GPIOA: PA0[3:0], PA5[23:20], PA15 via CRH[31:28]
+     * v5 (2026-05-11): + PA1 (供氧计时), PA11 (加湿), PA12 (O2 阀) — 6 颗状态 LED */
     uint32_t crl = GPIOA_CRL;
-    crl &= ~(0xFU << 0);    /* PA0 */
+    crl &= ~(0xFU << 0);    /* PA0  LEDA6 内循环 */
     crl |=  (0x2U << 0);
-    crl &= ~(0xFU << 20);   /* PA5 */
+    crl &= ~(0xFU << 4);    /* PA1  v5: 供氧计时 LED */
+    crl |=  (0x2U << 4);
+    crl &= ~(0xFU << 20);   /* PA5  LEDA1 护理 */
     crl |=  (0x2U << 20);
     GPIOA_CRL = crl;
     uint32_t crh = GPIOA_CRH;
-    crh &= ~(0xFU << 28);   /* PA15 */
+    crh &= ~(0xFU << 12);   /* PA11 v5: 加湿器 LED */
+    crh |=  (0x2U << 12);
+    crh &= ~(0xFU << 16);   /* PA12 v5: O2 阀 LED */
+    crh |=  (0x2U << 16);
+    crh &= ~(0xFU << 28);   /* PA15 LEDA8 风机 */
     crh |=  (0x2U << 28);
     GPIOA_CRH = crh;
-    /* Default HIGH = LEDs off */
-    GPIOA_BSRR = (1 << 0) | (1 << 5) | (1 << 15);
+    /* Default HIGH = LEDs off (active-low) */
+    GPIOA_BSRR = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 11) | (1 << 12) | (1 << 15);
 
-    /* --- GPIOB: PB10[11:8] (CRH) — LEDA4 红蓝光指示 --- */
+    /* --- GPIOB: PB10 (LEDA4 红蓝光), PB11 (v5: 压缩机/加热 LED) --- */
     {
         uint32_t b_crh = GPIOB_CRH;
-        b_crh &= ~(0xFU << 8);     /* PB10 bits[11:8] in CRH */
-        b_crh |=  (0x2U << 8);     /* Output PP 2MHz */
+        b_crh &= ~(0xFU << 8);     /* PB10 LEDA4 红蓝光 */
+        b_crh |=  (0x2U << 8);
+        b_crh &= ~(0xFU << 12);    /* PB11 v5: 压缩机/加热 LED */
+        b_crh |=  (0x2U << 12);
         GPIOB_CRH = b_crh;
-        GPIOB_BSRR = (1 << 10);    /* HIGH = off */
+        GPIOB_BSRR = (1 << 10) | (1 << 11);    /* HIGH = off */
     }
 
-    /* --- GPIOC: PC4[19:16], PC5[23:20], PC13 via CRH[23:20], PC15 via CRH[31:28] --- */
+    /* --- GPIOC: PC4, PC5, PC13, PC15 (现有 LEDA) + PC1 (v5 雾化), PC14 (v5 消毒) ---
+     * 注: PC14 默认是 OSC32_IN, 但屏幕板未启用 LSE (SystemClock 用 HSE/PLL ×9).
+     * PC15 已经成功作为 LEDA7 用 → PC14 同理可直接配 GPIO. */
     crl = GPIOC_CRL;
-    crl &= ~(0xFU << 16);   /* PC4 */
+    crl &= ~(0xFU << 4);    /* PC1  v5: 雾化 LED */
+    crl |=  (0x2U << 4);
+    crl &= ~(0xFU << 16);   /* PC4 LEDA2 照明 */
     crl |=  (0x2U << 16);
-    crl &= ~(0xFU << 20);   /* PC5 */
+    crl &= ~(0xFU << 20);   /* PC5 LEDA3 检查 */
     crl |=  (0x2U << 20);
     GPIOC_CRL = crl;
     crh = GPIOC_CRH;
-    crh &= ~(0xFU << 20);   /* PC13 */
+    crh &= ~(0xFU << 20);   /* PC13 LEDA5 开放供氧 */
     crh |=  (0x2U << 20);
-    crh &= ~(0xFU << 28);   /* PC15 */
+    crh &= ~(0xFU << 24);   /* PC14 v5: 消毒倒计时 LED */
+    crh |=  (0x2U << 24);
+    crh &= ~(0xFU << 28);   /* PC15 LEDA7 新风 */
     crh |=  (0x2U << 28);
     GPIOC_CRH = crh;
-    GPIOC_BSRR = (1 << 4) | (1 << 5) | (1 << 13) | (1 << 15);  /* HIGH = off */
+    GPIOC_BSRR = (1 << 1) | (1 << 4) | (1 << 5) | (1 << 13) | (1 << 14) | (1 << 15);  /* HIGH = off */
 }
 
 /* Drive LEDA1-8 from main board 0x01 packet data.
@@ -1357,6 +1372,50 @@ static void LEDA_Update(void)
         /* LEDA8 PA15 — 风机活动总指示 (任何 ≥ 1) */
         if (eff_duty >= 1) GPIOA_BSRR = (1 << (15 + 16));
         else               GPIOA_BSRR = (1 << 15);
+    }
+
+    /* === Stage 8 redo v5 (2026-05-11): 6 颗状态 LED — LED 屏原理图新增 ===
+     *
+     * 数据源全部来自 0x01 帧已有字段, 不动主板协议:
+     *   d[12-13] = disinfect_remaining (sec)
+     *   d[16-17] = relay_status (bitmap, see BSP_RELAY_xxx in 主板)
+     *     bit 0 = PTC heater
+     *     bit 1 = JIARE (底部加热)
+     *     bit 3 = ZIY (UV)
+     *     bit 4 = O2 阀
+     *     bit 5 = JIASHI (加湿)
+     *     bit 7 = YASUO (压缩机)
+     *     bit 8 = WH (雾化)
+     *
+     * 全部 active-low (跟 LEDA1-8 / LED8/9/10 一致): BSRR (pin+16)=LOW=on, BSRR pin=HIGH=off
+     */
+    {
+        /* PB11 — 压缩机或加热: bit 0 (PTC) OR bit 1 (JIARE) OR bit 7 (YASUO) */
+        const uint16_t MASK_HEAT_COMP = (1U << 0) | (1U << 1) | (1U << 7);
+        if (relay_st & MASK_HEAT_COMP) GPIOB_BSRR = (1 << (11 + 16));
+        else                           GPIOB_BSRR = (1 << 11);
+
+        /* PA11 — 加湿器: bit 5 (JIASHI) */
+        if (relay_st & (1U << 5)) GPIOA_BSRR = (1 << (11 + 16));
+        else                      GPIOA_BSRR = (1 << 11);
+
+        /* PA12 — 制氧机阀门: bit 4 (O2) */
+        if (relay_st & (1U << 4)) GPIOA_BSRR = (1 << (12 + 16));
+        else                      GPIOA_BSRR = (1 << 12);
+
+        /* PC1 — 雾化: bit 8 (WH) */
+        if (relay_st & (1U << 8)) GPIOC_BSRR = (1 << (1 + 16));
+        else                      GPIOC_BSRR = (1 << 1);
+
+        /* PC14 — 消毒倒计时: disinfect_remaining > 0 */
+        uint16_t dis_rem = (uint16_t)((d[12] << 8) | d[13]);
+        if (dis_rem > 0) GPIOC_BSRR = (1 << (14 + 16));
+        else             GPIOC_BSRR = (1 << 14);
+
+        /* PA1 — 供氧计时: O2 阀实际打开就亮 (跟 PA12 同步)
+         * 语义 = "正在供氧" (与 LEDA5 PC13 / PA12 一致) */
+        if (relay_st & (1U << 4)) GPIOA_BSRR = (1 << (1 + 16));
+        else                      GPIOA_BSRR = (1 << 1);
     }
 }
 
