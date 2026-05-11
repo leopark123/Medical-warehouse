@@ -740,19 +740,23 @@ static uint8_t hmi_revert_current_set_page(void)
     if (!s_setpoint_seed_done) return 0;   /* 没收到有效 39B 帧, 原值不可信, 拒绝撤销 */
     switch (s_hmi_page) {
     case HMI_PAGE_SET_TEMP:
+        /* v5.1 (2026-05-11) 产品需求变更: 撤销 = 回滚 target + 一律关温控
+         * 原行为 (条件清 enable): 进页前已开温控 → 撤销只回退 target, 温控仍开 (按原 target 继续控制)
+         * 新行为 (一律清 enable): 撤销总是把温控彻底关闭, 不管进页前开没开
+         * 副作用: 用户调温度时手抖长按, 温控也会被意外关掉. 需重新进 SET_TEMP 改值重新开. */
         s_set_temp_x10 = s_orig_temp_x10;
         send_param_set(0x01, (uint16_t)s_orig_temp_x10);
-        if (s_orig_enable_temp == 0) send_key_action(0x0C, 0x02);   /* 虚拟 KeyID 清 enable_temp */
+        send_key_action(0x0C, 0x02);   /* v5.1: 一律清 enable_temp_ctrl (之前是 if s_orig_enable_temp == 0) */
         return 1;
     case HMI_PAGE_SET_HUMID:
         s_set_hum_x10 = s_orig_hum_x10;
         send_param_set(0x02, s_orig_hum_x10);
-        if (s_orig_enable_humid == 0) send_key_action(0x0D, 0x02);
+        send_key_action(0x0D, 0x02);   /* v5.1: 一律清 enable_humid_ctrl */
         return 1;
     case HMI_PAGE_SET_O2:
         s_set_o2_x10 = s_orig_o2_x10;
         send_param_set(0x03, s_orig_o2_x10);
-        if (s_orig_enable_o2 == 0) send_key_action(0x0E, 0x02);
+        send_key_action(0x0E, 0x02);   /* v5.1: 一律清 enable_o2_ctrl */
         return 1;
     /* CO2 / 雾化 / 消毒 / 氧气计时 长按是另一种处理, 不走撤销 */
     default:
