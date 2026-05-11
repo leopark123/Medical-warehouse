@@ -1,8 +1,9 @@
 # HDICU iPad APP 联调文档 — Stage 8 redo v4.3
 
 **适用固件**: 主板 `main_stage8_redo_v4_3_FINAL.bin` (MD5 `6a5997fdf5c3d690d97d8480b602c601`)  
+**v4.4 待烧** (代码已 commit, 新增 0x0C 命令, 等下次有板烧入)  
 **生效日期**: 2026-05-07  
-**协议版本**: v2.1 (帧格式不变, 字段语义有调整)
+**协议版本**: v2.1 (帧格式不变, 字段语义有调整) + v4.4 新增 0x0C 命令
 
 ---
 
@@ -365,7 +366,125 @@ APP 端如果有"按键模拟"功能, 调用现有 0x82 KEY_ID=0x01 action=0x01 
 
 ---
 
-## 9. 技术联系
+## 9. 控制开关 — 关闭 / 启用 温/湿/O2 闭环
+
+### 9.1 问题背景
+
+iPad APP 协议**没有专门的"关闭温控/湿控/O2 控制"命令**, 写 0x03 参数 (cancel_flags 任一非 0) 会**自动开启**对应 enable_xxx_ctrl, 没有反向关闭路径 (除了 0x0B 整个出厂复位)。
+
+### 9.2 当前可用 (v4.3, 不需要新固件): 方案 C — Pseudo-Pause
+
+APP 想"暂停温控"时, 把 `target_temp` 写成跟当前 `sensor.temperature_avg` 相同的值:
+
+```
+APP 读 0x02 → sensor.temperature_avg = 256 (= 25.6°C)
+APP 发 0x03 → cancel_flags.temp = 1, target_temp = 256
+主板: temp_control 看 |25.6 - 25.6| < 滞环 → 不动加热/制冷继电器
+```
+
+**优点**: 立刻生效, 不需要新固件  
+**缺点**: 室温飘移到差距 > 滞环 (约 1°C) 时温控会重新触发。短期 (几分钟) 当"暂停"用 OK, 长期不可靠
+
+同理可对**湿控**写 `target_humidity = sensor.humidity * 10`, **O2 控制**写 `target_o2 = sensor.o2_percent * 10`。
+
+### 9.3 v4.4 新增 (待烧): 方案 A — 0x0C IPAD_CMD_CTRL_SWITCH
+
+#### 协议规格
+
+**请求** (APP → 主板, 6 字节):
+```
+AA 0C 02 <type> <action> <CS> 55
+```
+
+| 字节 | 名称 | 值 |
+|---|---|---|
+| 0 | header | 0xAA |
+| 1 | cmd | 0x0C (IPAD_CMD_CTRL_SWITCH) |
+| 2 | data_len | 0x02 |
+| 3 | type | 0x01=温控 / 0x02=湿控 / 0x03=O2控 / 0xFF=全部 |
+| 4 | action | 0x00=关 / 0x01=开 |
+| 5 | CS | (0xAA + 0x0C + 0x02 + type + action) & 0xFF |
+| 6 | tail | 0x55 |
+
+**成功响应** (主板 → APP, 复用 0x04 ACK 格式, 7 字节):
+```
+AA 04 02 00 00 B0 55
+       ↑  ↑  ↑
+       OK 无错误 CS
+```
+
+**错误响应**:
+- **长度错** (data_len ≠ 2): `AA 04 02 02 00 B2 55` (IPAD_WRITE_CMD_ERR)
+- **type/action 越界**: `AA FF 02 02 03 AF 55` (0xFF + PARAM_OOB + EPOS_LEN)
+
+#### 行为
+
+| 命令字节 | 主板执行 |
+|---|---|
+| type=0x01 action=0x00 | `setpoint.enable_temp_ctrl  = 0` |
+| type=0x01 action=0x01 | `setpoint.enable_temp_ctrl  = 1` |
+| type=0x02 action=0x00 | `setpoint.enable_humid_ctrl = 0` |
+| type=0x02 action=0x01 | `setpoint.enable_humid_ctrl = 1` |
+| type=0x03 action=0x00 | `setpoint.enable_o2_ctrl    = 0` |
+| type=0x03 action=0x01 | `setpoint.enable_o2_ctrl    = 1` |
+| type=0xFF action=0x00 | 三个全部 = 0 (一次关全部) |
+| type=0xFF action=0x01 | 三个全部 = 1 (一次开全部) |
+
+#### 注意事项
+
+1. **不清 alarm latch**: 跟 0x0B 出厂复位不同, 0x0C 关闭时**不清** alarm_flags。如果你要清, 发 `0x85` ack 或让用户按 KEY9。
+2. **跟 0x03 写参数交互**: 写 0x03 cancel_flags=1 会**自动重新开启** enable. 顺序很重要:
+   - 想关掉温控: 先发 0x0C type=0x01 action=0x00
+   - 之后不要再发 0x03 cancel_flags.temp=1 (否则又开起来)
+3. **不影响 setpoint 数值**: 仅改 enable 标志, `target_temp/humidity/o2/co2` 不动
+4. **互锁仍生效**: 即使 enable_o2_ctrl=1 设了, OPEN_O2 / 雾化 / UV 互锁规则下仍可能被静默清掉 (见 §2.5)
+
+#### 测试用例
+
+```
+TC-CTRL-1: 关单个 (温控)
+  发: AA 0C 02 01 00 B9 55
+  收: AA 04 02 00 00 B0 55
+  读 0x02 → enable_temp_ctrl = 0
+
+TC-CTRL-2: 开单个 (O2 控制)
+  发: AA 0C 02 03 01 BC 55
+  收: AA 04 02 00 00 B0 55
+  读 0x02 → enable_o2_ctrl = 1
+
+TC-CTRL-3: 全部关 (一键全停)
+  发: AA 0C 02 FF 00 B7 55
+  收: AA 04 02 00 00 B0 55
+  读 0x02 → enable_temp_ctrl = 0, enable_humid_ctrl = 0, enable_o2_ctrl = 0
+
+TC-CTRL-4: 非法 type
+  发: AA 0C 02 05 00 BD 55
+  收: AA FF 02 02 03 AF 55 (PARAM_OOB + EPOS_LEN)
+
+TC-CTRL-5: 非法 action
+  发: AA 0C 02 01 02 BB 55
+  收: AA FF 02 02 03 AF 55
+```
+
+### 9.4 APP 端实现建议
+
+#### UI 设计
+- 在"温度设置"/"湿度设置"/"氧浓度设置"页加 **"启用/关闭"** 开关
+- 每个开关绑定一个 0x0C 调用
+- 加"全部关"快捷按钮 (急停场景), 调用 type=0xFF action=0x00
+
+#### 状态同步
+- 0x0C 调用后立即读 0x02, 验证 enable_xxx_ctrl 实际值
+- 注意: enable 可能被互锁规则清 (见 §2.5), APP 要能识别并提示
+
+#### v4.3 vs v4.4 兼容
+- v4.3 (当前烧的) 不支持 0x0C, 发 0x0C 会收到 `0xFF` 错误响应 (CMD_UNSUPPORTED)
+- v4.4 (待烧) 支持。APP 检测固件版本: 发 0x0C 看是否拿到 0x04 ACK, 决定 UI 是否显示开关
+- 临时方案: 用 §9.2 的 pseudo-pause (target = sensor) 兜底
+
+---
+
+## 10. 技术联系
 
 - 固件版本: `stage8-redo-v4-3` (commit `158f2f8`)
 - bin: `firmware/_post_stage8_redo_v4_3_*/main_stage8_redo_v4_3_FINAL.bin`

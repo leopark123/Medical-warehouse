@@ -33,6 +33,16 @@ extern "C" {
 #define IPAD_CMD_WRITE_LIMITS       0x09    /* Data len=18 (v2.1), response=0x04 */
 #define IPAD_CMD_READ_LIMITS        0x0A    /* Data len=0 (v2.1), response=0x0A (18B) */
 #define IPAD_CMD_FACTORY_RESET      0x0B    /* Data len=0 (v2.1), response=0x04 */
+#define IPAD_CMD_CTRL_SWITCH        0x0C    /* v4.4: 控制开关 (enable_xxx_ctrl). Data len=2, response=0x04 */
+
+/* v4.4 (2026-05-07) — 0x0C 子命令: type + action */
+#define IPAD_CTRL_SWITCH_DATA_LEN   2
+#define IPAD_CTRL_TYPE_TEMP         0x01    /* enable_temp_ctrl */
+#define IPAD_CTRL_TYPE_HUMID        0x02    /* enable_humid_ctrl */
+#define IPAD_CTRL_TYPE_O2           0x03    /* enable_o2_ctrl */
+#define IPAD_CTRL_TYPE_ALL          0xFF    /* 全部 3 个一起 */
+#define IPAD_CTRL_ACTION_OFF        0x00
+#define IPAD_CTRL_ACTION_ON         0x01
 
 /* MainController -> iPad APP responses */
 #define IPAD_RSP_PARAMS             0x02    /* Data len=46 (v2.1, was 34) */

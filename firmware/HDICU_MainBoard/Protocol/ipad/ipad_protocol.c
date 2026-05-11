@@ -535,6 +535,69 @@ static void handle_factory_reset(void)
     bsp_uart_ipad_send(s_tx_buf, flen);
 }
 
+/* Forward declaration — handle_ctrl_switch 需要 send_error_response (定义在下面) */
+static void send_error_response(uint8_t error_type, uint8_t error_pos);
+
+/**
+ * @brief Handle 0x0C IPAD_CMD_CTRL_SWITCH — enable/disable control loops
+ *        v4.4 (2026-05-07): APP 可直接开/关 温/湿/O2 控制闭环, 不必走 0x0B 恢复出厂.
+ *        Data: [0]=type (0x01/0x02/0x03/0xFF), [1]=action (0x00 关 / 0x01 开)
+ *        Response: 0x04 IPAD_RSP_WRITE_ACK (跟 0x03 一致 ack 格式)
+ */
+static void handle_ctrl_switch(const uint8_t *data, uint8_t len)
+{
+    uint8_t ack[2];
+
+    /* 长度检查 */
+    if (len != IPAD_CTRL_SWITCH_DATA_LEN) {
+        ack[0] = IPAD_WRITE_CMD_ERR;
+        ack[1] = IPAD_ERR_NONE;
+        uint16_t flen = frame_build_ipad(s_tx_buf, IPAD_RSP_WRITE_ACK, ack, 2);
+        bsp_uart_ipad_send(s_tx_buf, flen);
+        return;
+    }
+
+    uint8_t type   = data[0];
+    uint8_t action = data[1];
+
+    /* action 取值合法性 */
+    if (action != IPAD_CTRL_ACTION_OFF && action != IPAD_CTRL_ACTION_ON) {
+        send_error_response(IPAD_EXCEPT_PARAM_OOB, IPAD_EPOS_LEN);
+        return;
+    }
+    uint8_t enable_val = (action == IPAD_CTRL_ACTION_ON) ? 1 : 0;
+
+    /* type 取值合法性 */
+    if (type != IPAD_CTRL_TYPE_TEMP &&
+        type != IPAD_CTRL_TYPE_HUMID &&
+        type != IPAD_CTRL_TYPE_O2 &&
+        type != IPAD_CTRL_TYPE_ALL) {
+        send_error_response(IPAD_EXCEPT_PARAM_OOB, IPAD_EPOS_LEN);
+        return;
+    }
+
+    AppData_t *d = app_data_get();
+    app_data_lock();
+    if (type == IPAD_CTRL_TYPE_TEMP || type == IPAD_CTRL_TYPE_ALL) {
+        d->setpoint.enable_temp_ctrl  = enable_val;
+    }
+    if (type == IPAD_CTRL_TYPE_HUMID || type == IPAD_CTRL_TYPE_ALL) {
+        d->setpoint.enable_humid_ctrl = enable_val;
+    }
+    if (type == IPAD_CTRL_TYPE_O2 || type == IPAD_CTRL_TYPE_ALL) {
+        d->setpoint.enable_o2_ctrl    = enable_val;
+    }
+    app_data_unlock();
+
+    /* 注意: 不清 alarm latch (跟 0x0B 出厂复位不同). 用户想清 latch 发 0x85 ack 或按 KEY9. */
+
+    /* ACK */
+    ack[0] = IPAD_WRITE_OK;
+    ack[1] = IPAD_ERR_NONE;
+    uint16_t flen = frame_build_ipad(s_tx_buf, IPAD_RSP_WRITE_ACK, ack, 2);
+    bsp_uart_ipad_send(s_tx_buf, flen);
+}
+
 /**
  * @brief Send 0xFF error response
  */
@@ -588,6 +651,11 @@ static void dispatch_command(uint8_t cmd, const uint8_t *data, uint8_t len)
     case IPAD_CMD_FACTORY_RESET:
         /* 0x0B (v2.1) → 恢复出厂默认 */
         handle_factory_reset();
+        break;
+
+    case IPAD_CMD_CTRL_SWITCH:
+        /* 0x0C (v4.4) → 开/关 温/湿/O2 控制闭环 */
+        handle_ctrl_switch(data, len);
         break;
 
     default:
