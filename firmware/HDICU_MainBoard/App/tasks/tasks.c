@@ -69,12 +69,27 @@ static void SensorTask(void *arg)
          * 之前: temperature_avg = 4 路平均, 但 temperature[2] (PA4) 才是物理唯一接探头的通道.
          * 屏幕板 / 温控用 temperature[2], iPad / 报警用 temperature_avg (4 路平均含 calibration).
          * 校准只加到 temperature_avg → iPad/报警看到校准后值, 屏幕/温控看不到, 数据不一致.
-         * 改后: ntc_calc_average 仍跑 (4 路滤波保留), 但 temperature_avg 直接 = PA4 = temperature[2].
-         * 校准下方一并加到 PA4, 所有消费者 (屏幕/温控/iPad/报警) 看到同一个校准后 PA4 值. */
+         * v6 改后: ntc_calc_average 仍跑 (4 路滤波保留), 但 temperature_avg 直接 = PA4 = temperature[2].
+         * v6.1 (Codex 修订): PA4 校准紧跟 NTC 读取后立即完成 (本块下方),
+         *                    保证 temperature[2] / temperature_avg 在写入瞬间就是校准后值,
+         *                    其他高优先级任务任何时刻读都不会看到"未校准 PA4". */
         uint16_t adc_vals[NTC_CHANNEL_COUNT];
         adc_driver_read_all(adc_vals);
         (void)ntc_calc_average(adc_vals, d->sensor.temperature);   /* 仍跑滤波, 返回的 4 路平均忽略 */
-        d->sensor.temperature_avg = d->sensor.temperature[2];      /* v6: PA4 = 舱内温度 */
+
+        /* v6.1 (2026-05-13) Codex 修订: PA4 校准必须紧跟 NTC 读取后立即完成,
+         * 不能等到下面 CO2/O2/JFC 读完再统一加. 否则 SensorTask 跑到这一句之前的整个时间段内,
+         * ControlTask/AlarmTask (同 High 优先级, 但 ControlTask 200ms 周期) 可能抢占 SensorTask
+         * 读到 "未校准 PA4". 概率低但存在. v6.1 修后, temperature[2] 在写入瞬间就是校准后值. */
+        if (d->sensor.temperature[2] != -999) {
+            int32_t t = (int32_t)d->sensor.temperature[2] + d->calibration.temp;
+            if (t < -999) t = -999;
+            if (t > 800) t = 800;
+            d->sensor.temperature[2] = (int16_t)t;        /* PA4 = 舱内温度, 校准后 */
+            d->sensor.temperature_avg = (int16_t)t;       /* 兼容字段 */
+        } else {
+            d->sensor.temperature_avg = -999;             /* invalid 透传 */
+        }
 
         /* --- CO2 (UART3, data arrives via ISR → co2_sensor_rx_byte) --- */
         d->sensor.co2_ppm = co2_sensor_get_ppm();
@@ -112,21 +127,12 @@ static void SensorTask(void *arg)
             d->sensor.o2_req_demand    = (pb6_cnt >= 2);
         }
 
-        /* === v2.1: 应用校准偏移 ===
+        /* === v2.1: 应用校准偏移 (humid/o2/co2) ===
          * 校准值直接加到sensor字段上, 使控制决策和上报值一致.
          * 防溢出clamp到合理范围.
-         * v6 (2026-05-13) 修订: 温度校准加到 PA4 (= temperature[2] = temperature_avg).
-         * 让屏幕板 (用 temperature[2]) 和 iPad/报警 (用 temperature_avg) 都看到校准后值. */
+         * v6.1 (2026-05-13) Codex 修订: 温度校准已移到 NTC 读取后立即完成 (上方),
+         * 避免 SensorTask 中途让 ControlTask/AlarmTask 抢占读到 "未校准 PA4". */
         {
-            /* Temperature: clamp to [-999, +800] (×10) — v6: 加到 PA4, 同步 _avg */
-            if (d->sensor.temperature[2] != -999) {
-                int32_t t = (int32_t)d->sensor.temperature[2] + d->calibration.temp;
-                if (t < -999) t = -999;
-                if (t > 800) t = 800;
-                d->sensor.temperature[2] = (int16_t)t;
-                d->sensor.temperature_avg = (int16_t)t;   /* 兼容字段, 内容 = 校准后 PA4 */
-            }
-
             /* Humidity: clamp to [0, 1000] (×10 = 100%) */
             if (d->sensor.o2_valid) {  /* humidity_raw来自O2传感器, o2_valid能用时humidity也有效 */
                 int32_t h = (int32_t)d->sensor.humidity_raw + d->calibration.humid;
