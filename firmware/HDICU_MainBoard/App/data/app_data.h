@@ -27,8 +27,11 @@ extern "C" {
 /*  Sensor Data (read by SensorTask, consumed by everyone)                   */
 /* ========================================================================= */
 typedef struct {
-    int16_t  temperature[4];    /* x10, 0.1°C resolution, from NTC ADC */
-    int16_t  temperature_avg;   /* x10, average of valid channels */
+    int16_t  temperature[4];    /* x10, 0.1°C resolution, from NTC ADC.
+                                 * temperature[2] = PA4 = 舱内温度 (校准后, v6 加 calibration).
+                                 * temperature[0/1/3] = PA0/PA1/PA5 备用通道 (无校准, 物理未必接探头). */
+    int16_t  temperature_avg;   /* x10, v6 (2026-05-13) 重定义: = temperature[2] (PA4 舱内温度, 校准后).
+                                 * 字段名保留兼容旧协议. 之前是 4 路平均, 现在统一指向 PA4. */
     uint8_t  humidity;          /* %, from O2 sensor (integer for screen) */
     uint16_t humidity_raw;      /* x10, for iPad protocol */
     uint8_t  o2_percent;        /* %, from O2 sensor (integer for screen) */

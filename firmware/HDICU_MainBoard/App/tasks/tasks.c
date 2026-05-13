@@ -64,10 +64,17 @@ static void SensorTask(void *arg)
     jfc103_sensor_start();
 
     for (;;) {
-        /* --- NTC Temperature (ADC) --- */
+        /* --- NTC Temperature (ADC) ---
+         * v6 (2026-05-13): 统一"PA4 作为唯一舱内温度"语义.
+         * 之前: temperature_avg = 4 路平均, 但 temperature[2] (PA4) 才是物理唯一接探头的通道.
+         * 屏幕板 / 温控用 temperature[2], iPad / 报警用 temperature_avg (4 路平均含 calibration).
+         * 校准只加到 temperature_avg → iPad/报警看到校准后值, 屏幕/温控看不到, 数据不一致.
+         * 改后: ntc_calc_average 仍跑 (4 路滤波保留), 但 temperature_avg 直接 = PA4 = temperature[2].
+         * 校准下方一并加到 PA4, 所有消费者 (屏幕/温控/iPad/报警) 看到同一个校准后 PA4 值. */
         uint16_t adc_vals[NTC_CHANNEL_COUNT];
         adc_driver_read_all(adc_vals);
-        d->sensor.temperature_avg = ntc_calc_average(adc_vals, d->sensor.temperature);
+        (void)ntc_calc_average(adc_vals, d->sensor.temperature);   /* 仍跑滤波, 返回的 4 路平均忽略 */
+        d->sensor.temperature_avg = d->sensor.temperature[2];      /* v6: PA4 = 舱内温度 */
 
         /* --- CO2 (UART3, data arrives via ISR → co2_sensor_rx_byte) --- */
         d->sensor.co2_ppm = co2_sensor_get_ppm();
@@ -107,14 +114,17 @@ static void SensorTask(void *arg)
 
         /* === v2.1: 应用校准偏移 ===
          * 校准值直接加到sensor字段上, 使控制决策和上报值一致.
-         * 防溢出clamp到合理范围. */
+         * 防溢出clamp到合理范围.
+         * v6 (2026-05-13) 修订: 温度校准加到 PA4 (= temperature[2] = temperature_avg).
+         * 让屏幕板 (用 temperature[2]) 和 iPad/报警 (用 temperature_avg) 都看到校准后值. */
         {
-            /* Temperature: clamp to [-999, +800] (×10) */
-            if (d->sensor.temperature_avg != -999) {
-                int32_t t = (int32_t)d->sensor.temperature_avg + d->calibration.temp;
+            /* Temperature: clamp to [-999, +800] (×10) — v6: 加到 PA4, 同步 _avg */
+            if (d->sensor.temperature[2] != -999) {
+                int32_t t = (int32_t)d->sensor.temperature[2] + d->calibration.temp;
                 if (t < -999) t = -999;
                 if (t > 800) t = 800;
-                d->sensor.temperature_avg = (int16_t)t;
+                d->sensor.temperature[2] = (int16_t)t;
+                d->sensor.temperature_avg = (int16_t)t;   /* 兼容字段, 内容 = 校准后 PA4 */
             }
 
             /* Humidity: clamp to [0, 1000] (×10 = 100%) */
